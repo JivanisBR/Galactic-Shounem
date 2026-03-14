@@ -38,3 +38,54 @@ Dica de ouro: Dê Ctrl+F na palavra "ajuste" pelo código. Você encontrará com
 ​Se for testar localmente via terminal, usamos o compilador G++ incluindo todos os arquivos .cpp de uma vez. O comando padrão (ajuste os caminhos da Raylib conforme o seu PC) é:
 g++ *.cpp -o SpaceGameplayOO.exe -I C:\raylib\raylib-5.5_win64_mingw-w64\include -L C:\raylib\raylib-5.5_win64_mingw-w64\lib -lraylib -lopengl32 -lgdi32 -lwinmm
 
+____----_____---_______--________-------____
+
+## 📚 5. Guia Rápido de Funções Raylib (Cheat Sheet)
+
+Exemplos práticos de como preencher as principais funções visuais que usamos no código:
+
+### Formas Geométricas Básicas
+```cpp
+// Desenha um retângulo sólido, usado para visualizar hitboxes.
+// Parâmetros: Pos X, Pos Y, Largura, Altura, Cor
+DrawRectangle(100, 50, 200, 100, RED);
+
+// Desenha uma elipse (oval). Muito usado nos tiros e lasers.
+// Parâmetros: Centro X, Centro Y, Raio Horizontal, Raio Vertical, Cor
+DrawEllipse(300, 200, 4.0f, 15.0f, ORANGE);
+
+// Desenha um círculo perfeito baseado em um Vector2 (Usado nos drops e partículas).
+// Parâmetros: Posição (Vector2), Raio, Cor
+DrawCircleV((Vector2){ 400.0f, 300.0f }, 8.0f, GOLD);
+
+
+// Escreve um texto fixo na tela.
+// Parâmetros: Texto, Pos X, Pos Y, Tamanho da Fonte, Cor
+DrawText("PRESS R TO RESPAWN", 450, 420, 20, RED);
+
+// Para misturar texto com variáveis numéricas (como Vida ou Pontos), use TextFormat:
+DrawText(TextFormat("Vida: %d", vidaBoss), 100, 50, 20, WHITE);
+
+
+// Desenha uma imagem inteira na tela.
+// Parâmetros: Textura, Pos X, Pos Y, Cor de Filtro (WHITE mantém as cores originais)
+DrawTexture(meteoro_tex, meteoro_x, meteoro_y, WHITE);
+
+// DrawTexturePro: A função mais poderosa! Usada para animar a nave e montar o Boss.
+// Ela corta um pedaço da imagem original, muda o tamanho e gira na tela.
+Rectangle recorteImg = { 0.0f, 0.0f, 100.0f, 100.0f }; // X, Y, Largura, Altura no arquivo da imagem
+Rectangle destinoTela = { (float)nave_x, (float)nave_y, 200.0f, 200.0f }; // Posição e Tamanho no jogo
+Vector2 eixoRotacao = { 100.0f, 100.0f }; // Ponto central para o giro (Pivot)
+float rotacao = 0.0f; // Ângulo em graus
+
+// Parâmetros: Textura, Recorte (Source), Destino (Dest), Eixo (Origin), Rotação, Cor
+DrawTexturePro(nav, recorteImg, destinoTela, eixoRotacao, rotacao, WHITE);
+
+
+// Criando uma cor personalizada (RGBA: Vermelho, Verde, Azul, Transparência). Valores de 0 a 255.
+Color roxoNeon = { 128, 0, 128, 255 }; 
+
+// ColorAlpha: Essencial nas explosões e animação de morte para fazer o objeto "sumir" aos poucos.
+// Parâmetros: Cor base, Transparência em float (0.0f é 100% invisível, 1.0f é 100% sólido)
+ColorAlpha(RED, 0.5f); // Retorna um vermelho com 50% de transparência
+
