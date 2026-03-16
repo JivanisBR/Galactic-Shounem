@@ -11,9 +11,24 @@ BIG Game Project jjjj
 
 ​Nosso jogo foi refatorado recentemente para usar Orientação a Objetos (OO) nas partes mais complexas como o Boss e entidades futuras.
 O código está dividido em:
-​SpaceGameplayOO.cpp (O Motor Principal): 
-É o coração do jogo. Aqui rola o Game Loop principal, controle da nave do Player, spawn de meteoros e inimigos normais, física dos drops de minério, sistema de colisões geral e o gerador procedural do fundo de estrelas (parallax e nebulosas).
-​Boss.h e Boss.cpp (A Caixa Preta do Chefão): Tudo relacionado ao Boss Final (texturas, IA, padrões de tiro, física das peças voando na morte, estados de raiva) está isolado nestes arquivos. O arquivo principal do jogo não sabe como o boss funciona, ele apenas instancia a classe (Boss* chefeFinal = new Boss();) e chama suas funções (ComportamentoVivo e ComportamentoMorto).
+
+​SpaceGameplayOO.cpp (O Motor do SpaceShooter): 
+É o motor mais refinado e testado até agora, mas futuramente será apenas uma gameplay de transição entre fases. Aqui rola o Game Loop principal, controle da nave do Player, spawn de meteoros e inimigos normais, física dos drops de minério, sistema de colisões geral e o gerador procedural do fundo de estrelas (parallax e nebulosas).
+
+​Boss.h e Boss.cpp (A Caixa Preta do Chefão): 
+Tudo relacionado ao Boss Final (texturas, IA, padrões de tiro, física das peças voando na morte, estados de raiva) está isolado nestes arquivos. O arquivo principal do jogo não sabe como o boss funciona, ele apenas instancia a classe (Boss* chefeFinal = new Boss();) e chama suas funções (ComportamentoVivo e ComportamentoMorto).
+
+Exploration (jogotop.cpp):
+É o motor da exploração top-down no planeta, onde ficará a loja, nave, eventos aleatórios futuros, e a entrada para o corredor de salas.
+
+EstelarMap (Mapa do jogo):
+É o mapa interativo da galáxia, onde o jogador irá selecionar para onde irá a seguir, e ver a localização de guerreiros fortes.
+
+UpgradeAstral (árvore de skills):
+É o motor de upgrade de skills baseada em quantas kills o jogador fez no game, e será o que definirá a aura e PDL do jogador.
+
+BeatEmUp:
+Será o motor principal do jogo, toda a mecânica de luta e movimentação do player e inimigos estará aqui futuramente.
 
 ## ​⚙️ 2. Como Fazer Ajustes Finos ("Tweaks")
 ​Muitos valores no jogo estão abertos para balanceamento e polimento.
