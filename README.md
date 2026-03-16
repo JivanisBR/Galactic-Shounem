@@ -33,12 +33,12 @@ Dica de ouro: Dê Ctrl+F na palavra "ajuste" pelo código. Você encontrará com
 ​GetRandomValue(min, max): Usado exaustivamente na IA e na física de explosão para criar caos e imprevisibilidade.
 
 
-​💻 4. Como Compilar
+## ​💻 4. Como Compilar
 
 ​Se for testar localmente via terminal, usamos o compilador G++ incluindo todos os arquivos .cpp de uma vez. O comando padrão (ajuste os caminhos da Raylib conforme o seu PC) é:
 g++ *.cpp -o SpaceGameplayOO.exe -I C:\raylib\raylib-5.5_win64_mingw-w64\include -L C:\raylib\raylib-5.5_win64_mingw-w64\lib -lraylib -lopengl32 -lgdi32 -lwinmm
 
-____----_____---_______--________-------____
+
 
 ## 📚 5. Guia Rápido de Funções Raylib (Cheat Sheet)
 
