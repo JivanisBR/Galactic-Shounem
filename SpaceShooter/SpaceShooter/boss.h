@@ -5,6 +5,8 @@
 
 #define MAX_TIROS_BOSS 500
 
+class Player; // Avisa que o Player existe
+
 struct TiroBoss {
     Vector2 pos;
     bool ativo;
@@ -25,7 +27,7 @@ public:
     float deathSoundDelay = 0.0f;
     int bombCount = 0;
 
-    void ComportamentoVivo(float mult, float dt, int& vidaPlayer, int death_x, int death_y, bool& tocaSomDano);
+    void ComportamentoVivo(float mult, float dt, Player* jogador, int death_x, int death_y, bool& tocaSomDano);
     void ComportamentoMorto(float mult, float dt, bool& boss_defeated, bool& winn, int dist_travel, int dist_total, bool& engatilhaExplosao);
 
     // Texturas e Tela

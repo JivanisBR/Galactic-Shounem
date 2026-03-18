@@ -5,30 +5,46 @@
 #include <vector>
 #include <cmath>
 #include "boss.h"
+#include "Player.h"
+#include "Nave.h"
 Texture2D menui, credits, nav, mort, fire1, meteoro_tex, enemynav;
 Sound sob[5], bomb, ai, oh;
 Music background_music;
 
 float mult = 1.0f;
 
-int distance_total = GetRandomValue(20000,80000);
+int distance_total = (GetRandomValue(100,200)*1000);
 int distance_traveled = 0;
 int distance_left = distance_total;
 
+// --- EVENTO CINTURÃO DE ASTEROIDES ---
+bool temCinturao = false;
+int inicioCinturao = 0;
+int fimCinturao = 0;
+int densidadeCinturao = 0;
+void IniciarCinturao() {
+    temCinturao = (GetRandomValue(0, 1) == 1); 
+    if (temCinturao) {
+        inicioCinturao = distance_total * GetRandomValue(20, 50) / 100.0f; 
+        fimCinturao = inicioCinturao + GetRandomValue(5000, 15000); 
+        // Agora a densidade é exatamente a quantidade máxima simultânea na tela
+        densidadeCinturao = GetRandomValue(5, 10); 
+    }
+}
+
 Boss* chefeFinal = nullptr; 
 bool boss_defeated = false;
-
-enum TipoMinerio { FERRO, PRATA, OURO };
 
 struct Drop {
     Vector2 pos; // Usando Vector2 para facilitar a física
     Vector2 vel; // Velocidade da explosão
     int valor;   // Quanto este pedacinho vale
     TipoMinerio tipo;
+    bool isCombustivel = false;
 };
 // A lista e os inventários continuam iguais:
 std::vector<Drop> drops;
-int inv_ferro = 0, inv_prata = 0, inv_ouro = 0;
+Player* jogador = nullptr;
 
 
 
@@ -107,6 +123,17 @@ struct Nebula {
     std::vector<NebulaParticle> particles;
 };
 
+struct Meteoro {
+    Vector2 pos;
+    float fall;
+    float rot;
+    float rotSpeed;
+    bool ativo;
+    Vector2 velIndependente; // <--- NOVO: Velocidade própria no espaço
+    bool isEmergencia;
+};
+std::vector<Meteoro> meteoros; // A lista que guarda todos os meteoros
+
 //----------------------------------------------------------------------------------
 // ESTRUTURA DOS INIMIGOS
 /*struct Enemy {
@@ -131,21 +158,15 @@ std::vector<Nebula> nebulas;
 RenderTexture2D static_dust_texture;
 int opt = 1, sob_index = 0;
 bool menu = true, creds = false, quit = false, boss = false, enemy = false, winn = false, pause = false;
-int fall, bum = 0, bump = 0, vmin = 1, vmax = 4, pisc = 0;
+int bum = 0, vmin = 1, vmax = 4, pisc = 0;
 int mort_x = 250, mort_y = 70;
-int pontos = 0, storo1 = 0, storo2 = 0, storo3 = 0, wait = 0, ng = 0;
+int pontos = 0, storo1 = 0, storo2 = 0, storo3 = 0, ng = 0;
 int nave_x = 390, nave_y = 600, velo = 3, tvel = 5;
 int exp_x, exp_y;
-int death_x, death_y, vida = 1;
+int death_x, death_y, vida = 10;
 int fire_x, fire_y;
 int foga = 0, fogd = 0, cdpause = 0;
 int sol_x, sol_y;
-int bot_x, bot_y;
-int expm_x, expm_y;
-int meteoro_x, meteoro_y;
-float meteoro_rot = 0.0f;       // Ângulo atual do meteoro
-float meteoro_rot_speed = 0.0f; // Velocidade e direção do giro
-bool meter = true;
 int hitbox1x, hitbox1y, hitbox2x, hitbox2y;
 bool hit = false;
 int death_sound_delay = 0;
@@ -292,6 +313,7 @@ void SpawnLoot(Vector2 centroExplosao) {
         float speed = GetRandomValue(50, 90) / 10.0f; 
         d.vel = { cosf(ang) * speed, sinf(ang) * speed };
 
+        d.isCombustivel = false;
         drops.push_back(d);
     }
 }
@@ -518,7 +540,7 @@ void controle() {
         hitbox1y = nave_y + 40; hitbox2y = nave_y + 10;
         fire_x = nave_x + 49;
         fire_y = nave_y + 84;
-        death_x = nave_x + 25;
+        death_x = nave_x - 30;
         death_y = nave_y + 15;
 
     }
@@ -554,30 +576,35 @@ void desenhar() {
         }
     } else {
         ClearBackground(BLACK);
+
+        // O relógio do iFrame agora roda independente da nave estar viajando ou parada no Boss
+        if (jogador->minhaNave->iFrame > 0.0f) {
+            jogador->minhaNave->iFrame -= GetFrameTime();
+        }
         
         // --- ATUALIZAÇÃO E DESENHO DO FUNDO DE ESTRELAS ---
 
-    // --- CONTROLE MESTRE DE VELOCIDADE ---
+    // --- CONTROLE MESTRE DE VELOCIDADE E FÍSICA ---
     bool turbo_on = IsKeyDown(KEY_K);
     bool freio_on = IsKeyDown(KEY_L);
 
-    // Fator de Velocidade do Mundo
-    float world_speed_factor;
+    // 1. Atualiza a Física da Nave no Espaço (Se estiver viva e não tiver chegado)
+    if (distance_left > 0 && vida > 0 && !winn) {
+        jogador->minhaNave->AtualizarVoo(GetFrameTime() * mult, turbo_on, freio_on);
+    }
+
+    // 2. Feedback Visual (Fator de Velocidade do Mundo)
+    // Se a velocidade for 100, o fator é 1.0 (Normal). Se for 500, o fator é 5.0 (Rápido).
+    float world_speed_factor = jogador->minhaNave->velocidadeAtual / 100.0f;
     
     if (distance_left <= 0) {
         world_speed_factor = 0.0f; // NAVE CHEGOU: PARA TUDO
-    } else if (turbo_on) {
-        world_speed_factor = 30.0f;
-    } else if (freio_on) {
-        world_speed_factor = 0.3f; 
-    } else {
-        world_speed_factor = 1.0f;
     }
 
-    // Atualiza a distância percorrida APENAS SE NÃO CHEGOU
-    if (distance_left > 0) {
-        float distancia_base = 1.5f; 
-        float avanco_exato = distancia_base * world_speed_factor * mult;
+    // 3. Progresso da Viagem Real
+    if (distance_left > 0 && vida > 0) {
+        // O avanço real no espaço é puramente a velocidade atual da nave
+        float avanco_exato = jogador->minhaNave->velocidadeAtual * GetFrameTime() * mult;
         
         distance_traveled += (int)avanco_exato;
         distance_left -= (int)avanco_exato;
@@ -737,7 +764,13 @@ void desenhar() {
         DrawText("Pause: P", 20, 70, 20, WHITE);
         DrawText("Turbo: K", 20, 90, 20, WHITE);
         DrawText("Break: L", 20, 110, 20, WHITE);
+        DrawText(TextFormat("VELOCIDADE: %d km/s", (int)jogador->minhaNave->velocidadeAtual), 20, 140, 20, SKYBLUE);
+        DrawText(TextFormat("COMBUSTÍVEL: %d / %d", (int)jogador->minhaNave->combustivelAtual, (int)jogador->minhaNave->combustivelMaximo), 20, 160, 20, ORANGE);
+        DrawText(TextFormat("ESCUDO: %d N", jogador->minhaNave->escudoAtual), 20, 180, 20, SKYBLUE); 
         
+        // Sincroniza a morte: Se o escudo zerar, a 'vida' zera para disparar a tela de Game Over
+        if (jogador->minhaNave->escudoAtual <= 0) vida = 0;
+
         char distance_str[20];
         sprintf(distance_str, "%d       ", distance_left);
         if(distance_left>0){ 
@@ -846,31 +879,55 @@ void desenhar() {
 
                 // --- COLISÕES ---
 
-                // A) Colisão com METEORO (Inimigo comum)
-                // Usando a mesma lógica de hitbox sua: projetil dentro da caixa do bot
-                if (meter && vida > 0) {
-                    if (tiros[i].y <= bot_y + 40 &&       // Altura
-                        tiros[i].y >= bot_y - 20 && 
-                        tiros[i].x >= bot_x &&            // Largura esquerda
-                        tiros[i].x <= bot_x + 60) {       // Largura direita
+                // A) Colisão com a LISTA DE METEOROS
+                bool tiroAcertou = false;
+                for (int m = 0; m < (int)meteoros.size(); m++) {
+                    if (!meteoros[m].ativo) continue;
+
+                    if (tiros[i].y <= meteoros[m].pos.y + 40 &&       
+                        tiros[i].y >= meteoros[m].pos.y - 20 && 
+                        tiros[i].x >= meteoros[m].pos.x &&            
+                        tiros[i].x <= meteoros[m].pos.x + 60) {       
                         
-                        // Acertou!
                         PlaySound(bomb);
-                        AdicionarExplosao({(float)bot_x + 30, (float)bot_y + 20}, SMALL_SHIP); // Sua explosão nova
-                        SpawnLoot({ (float)bot_x + 30, (float)bot_y + 20 });
-                        pontos++;
+                        AdicionarExplosao({meteoros[m].pos.x + 30, meteoros[m].pos.y + 20}, SMALL_SHIP); 
                         
-                        // Reseta o inimigo
-                        meter = false;
-                        bump = 0;
-                        // Importante: Remove o tiro que acertou!
-                        tiros.erase(tiros.begin() + i);
-                        i--; 
+                        // Lógica de Sobrevivência (Game Design)
+                        if (meteoros[m].isEmergencia) {
+                            // O de emergência SEMPRE dropa 3 combustíveis
+                            for(int d=0; d<3; d++) { 
+                                Drop dropComb; 
+                                dropComb.pos = {meteoros[m].pos.x + 30, meteoros[m].pos.y + 20};
+                                float ang = GetRandomValue(180, 360) * DEG2RAD; 
+                                dropComb.vel = { cosf(ang) * (GetRandomValue(30, 60)/10.0f), sinf(ang) * (GetRandomValue(30, 60)/10.0f) };
+                                dropComb.isCombustivel = true; dropComb.valor = 15; 
+                                drops.push_back(dropComb);
+                            }
+                        } 
+                        else if (jogador->minhaNave->combustivelAtual <= 0.0f && GetRandomValue(0, 1) == 0) {
+                            // Se tá sem gasolina e destruiu um meteoro normal: 50% de chance de dropar 1 combustível
+                            Drop dropComb; 
+                            dropComb.pos = {meteoros[m].pos.x + 30, meteoros[m].pos.y + 20};
+                            float ang = GetRandomValue(180, 360) * DEG2RAD; 
+                            dropComb.vel = { cosf(ang) * 4.0f, sinf(ang) * 4.0f };
+                            dropComb.isCombustivel = true; dropComb.valor = 10; 
+                            drops.push_back(dropComb);
+                        } 
+                        else {
+                            // Drop normal de minérios
+                            SpawnLoot({meteoros[m].pos.x + 30, meteoros[m].pos.y + 20});
+                        }
                         
-                        // Lógica sua de respawn
-                        expm_x = bot_x; expm_y = bot_y;
-                        continue; // Pula pro próximo tiro
+                        meteoros[m].ativo = false; // Destrói o meteoro
+                        tiroAcertou = true;
+                        break; // O tiro já explodiu, para de checar os outros meteoros
                     }
+                }
+                
+                if (tiroAcertou) {
+                    tiros.erase(tiros.begin() + i); // Remove o tiro
+                    i--; 
+                    continue; // Pula pro próximo tiro
                 }
 
                 // B) Colisão com BOSS
@@ -951,7 +1008,48 @@ void desenhar() {
             Rectangle sourceRec = { (float)(frame_atual * 100), 0.0f, 100.0f * direcao_textura, 100.0f };
             Vector2 posNave = { (float)nave_x, (float)nave_y };
 
-            DrawTextureRec(nav, sourceRec, posNave, WHITE);
+            // A nave pisca (mostrarNave) durante o iFrame
+            bool mostrarNave = !(jogador->minhaNave->iFrame > 0.0f && ((int)(GetTime() * 15) % 2 == 0));
+
+            // Desenha a nave normalmente
+            if (mostrarNave && jogador->minhaNave->escudoAtual > 0) {
+                DrawTextureRec(nav, sourceRec, posNave, WHITE);
+            }
+
+            // O Campo de Força SÓ aparece quando toma dano (no iFrame)
+            if (jogador->minhaNave->iFrame > 0.0f) {
+                // Matemática do pulso (mantemos a mesma para sincronizar tudo)
+                float pulsoEscudo = sin(GetTime() * 20.0f) * 10.0f; 
+                float baseRaio = 75.0f + (pulsoEscudo / 2.0f); // Raio base para a estrutura
+                float tamanhoGlow = baseRaio * 3.0f;           // Tamanho total para a textura de brilho
+
+                // Centralização exata (baseada nos testes anteriores de hitbox)
+                int centerX = nave_x + 50;
+                int centerY = nave_y + 45;
+
+                // --- 1. O Brilho Volumétrico (Blend Additive / Luz) ---
+                BeginBlendMode(BLEND_ADDITIVE); 
+                
+                // Aura azul externa difusa
+                DrawTexturePro(texParticula, 
+                    {0, 0, 64, 64}, 
+                    { (float)centerX, (float)centerY, tamanhoGlow, tamanhoGlow }, 
+                    { tamanhoGlow / 2.0f, tamanhoGlow / 2.0f }, 
+                    0.0f, ColorAlpha(BLUE, 0.5f)); 
+                
+                // Núcleo branco no centro (efeito "brilho da lâmpada")
+                DrawTexturePro(texParticula, 
+                    {0, 0, 64, 64}, 
+                    { (float)centerX, (float)centerY, tamanhoGlow * 0.6f, tamanhoGlow * 0.6f }, 
+                    { (tamanhoGlow * 0.6f) / 2.0f, (tamanhoGlow * 0.6f) / 2.0f }, 
+                    0.0f, ColorAlpha(SKYBLUE, 0.3f));
+
+                Color corCasca = ColorAlpha(SKYBLUE, 0.5f);
+                // Desenha a linha da elipse (raioH e raioV ligeiramente diferentes para dar perspectiva)
+                DrawEllipseLines(centerX, centerY, baseRaio, baseRaio * 0.95f, corCasca);
+                    
+                EndBlendMode(); // Encerra o modo luz    
+            }
 
             // --- REFLEXO DE LUZ NA NAVE (BACKLIGHT) ---
             // Recalculamos se está com turbo para sincronizar a luz
@@ -1012,27 +1110,26 @@ void desenhar() {
         drops[i].vel.x *= 0.96f;
         drops[i].vel.y *= 0.96f;
 
-        bool turbo = IsKeyDown(KEY_K);
-        float velocidadeQueda;
-        float drop_factor = (turbo_on) ? 4.0f : ((freio_on) ? 0.3f : 1.0f);
-        drops[i].pos.y += (3.0f * drop_factor) * mult;
+        // SE FOR COMBUSTÍVEL, DESCE DEVAGAR INDEPENDENTE DA NAVE. SE FOR LOOT, É ENGOLIDO PELA INÉRCIA.
+        if (drops[i].isCombustivel) drops[i].pos.y += 2.0f * mult; 
+        else drops[i].pos.y += (3.0f * world_speed_factor) * mult;
 
-  
-
-        // --- DESENHO (Agora todos brilham) ---
+        // --- DESENHO COM BRILHO ---
         Color corLoot, corBorda;
         float raio;
-        if (drops[i].tipo == FERRO) { 
-            corLoot = {100, 100, 100, 255}; corBorda = WHITE; raio = 6.0f; // Cinza brilhante
+        
+        if (drops[i].isCombustivel) {
+            corLoot = RED; corBorda = RED; raio = 8.0f; // Combustível Vermelho Vivo
+        } else if (drops[i].tipo == FERRO) { 
+            corLoot = {100, 100, 100, 255}; corBorda = WHITE; raio = 6.0f; 
         } else if (drops[i].tipo == PRATA) { 
-            corLoot = {200, 200, 255, 255}; corBorda = BLUE; raio = 7.0f; // Azulado
+            corLoot = {200, 200, 255, 255}; corBorda = BLUE; raio = 7.0f; 
         } else { 
-            corLoot = GOLD; corBorda = ORANGE; raio = 8.0f; // Dourado forte
+            corLoot = GOLD; corBorda = ORANGE; raio = 8.0f; 
         }
 
-        // Desenha com brilho
-        DrawCircleV(drops[i].pos, raio + 3, ColorAlpha(corBorda, 0.4f)); // Aura
-        DrawCircleV(drops[i].pos, raio, corLoot); // Núcleo
+        DrawCircleV(drops[i].pos, raio + 3, ColorAlpha(corBorda, 0.4f)); 
+        DrawCircleV(drops[i].pos, raio, corLoot);
 
         // --- COLETA (HITBOX RETANGULAR LARGA) ---
         // Centro da nave
@@ -1045,9 +1142,17 @@ void desenhar() {
         if (fabs(drops[i].pos.x - naveCenterX) < 60 && 
             fabs(drops[i].pos.y - naveCenterY) < 40) {
             
-            if (drops[i].tipo == FERRO) inv_ferro += drops[i].valor;
-            else if (drops[i].tipo == PRATA) inv_prata += drops[i].valor;
-            else inv_ouro += drops[i].valor;
+            if (drops[i].isCombustivel) {
+                jogador->minhaNave->combustivelAtual += drops[i].valor;
+                // Não deixa passar do limite do tanque
+                if (jogador->minhaNave->combustivelAtual > jogador->minhaNave->combustivelMaximo) {
+                    jogador->minhaNave->combustivelAtual = jogador->minhaNave->combustivelMaximo;
+                }
+            } else {
+                if (drops[i].tipo == FERRO) jogador->minhaNave->GuardarMinerio(FERRO, drops[i].valor);
+                else if (drops[i].tipo == PRATA) jogador->minhaNave->GuardarMinerio(PRATA, drops[i].valor);
+                else jogador->minhaNave->GuardarMinerio(OURO, drops[i].valor);
+            }
 
             drops.erase(drops.begin() + i);
             i--;
@@ -1066,71 +1171,143 @@ void desenhar() {
         char pontos_str[10];
         sprintf(pontos_str, "%d       ", pontos);       
         DrawText(pontos_str, 600, 50, 20, WHITE);
-        // HUD DE RECURSOS (Canto Inferior Direito ou onde preferir)
-        DrawText(TextFormat("Fe: %d", inv_ferro), 1050, 600, 20, GRAY);
-        DrawText(TextFormat("Ag: %d", inv_prata), 1050, 630, 20, LIGHTGRAY);
-        DrawText(TextFormat("Au: %d", inv_ouro), 1050, 660, 20, GOLD);
+        // HUD DE RECURSOS 
+        DrawText(TextFormat("Fe: %d", jogador->minhaNave->invFerro), 1050, 600, 20, GRAY);
+        DrawText(TextFormat("Ag: %d", jogador->minhaNave->invPrata), 1050, 630, 20, LIGHTGRAY);
+        DrawText(TextFormat("Au: %d", jogador->minhaNave->invOuro), 1050, 660, 20, GOLD);
 
-        if (meter && !winn) {
-            // Atualiza o ângulo
-            meteoro_rot += meteoro_rot_speed * GetFrameTime();
+        // 1. O Alarme do Cinturão (Avisa 3 segundos antes do impacto real, não importa a velocidade)
+        float distanciaAviso = jogador->minhaNave->velocidadeAtual * 3.0f;
+        if (distanciaAviso < 3000.0f) distanciaAviso = 3000.0f; // Distância mínima de segurança
 
-            // Desenha girando a partir do centro
-            float w = (float)meteoro_tex.width;
-            float h = (float)meteoro_tex.height;
-            Rectangle source = { 0.0f, 0.0f, w, h };
-            Rectangle dest = { (float)meteoro_x + w/2.0f, (float)meteoro_y + h/2.0f, w, h };
-            Vector2 origin = { w/2.0f, h/2.0f };
-            DrawTexturePro(meteoro_tex, source, dest, origin, meteoro_rot, WHITE);
-            float enemy_speed_mod = 1.0f;
-            if (turbo_on) enemy_speed_mod = 4.0f; // Caindo rápido
-            else if (freio_on) enemy_speed_mod = 0.4f; // Câmera lenta
-            
-            // Aplica na queda
-            if (meter) {
-            bot_y += (fall * enemy_speed_mod) * mult;
+        if (temCinturao && distance_traveled >= inicioCinturao - distanciaAviso && distance_traveled < inicioCinturao) {
+            if ((int)(GetTime() * 4) % 2 == 0) { 
+                DrawText("AVISO: CINTURAO DE ASTEROIDES A FRENTE! REDUZA A VELOCIDADE!", 150, 200, 25, RED);
             }
-            meteoro_y = bot_y;
-            meteoro_x = bot_x;
         }
-        if (bot_y >= 750 && vida > 0) {
-            bot_x = GetRandomValue(30, 1150);
-            bot_y = GetRandomValue(-800, -10);
-            fall = GetRandomValue(vmin, vmax);
-            meteoro_rot_speed = (float)GetRandomValue(30, 150) * ((GetRandomValue(0, 1) == 0) ? 1.0f : -1.0f);
-        //    pontos--;
+
+        // 1.5. Aviso de Zona Segura (Só avisa se acabou a distância E sumiram as pedras)
+        bool semMeteoros = true;
+        for (auto& m : meteoros) if (m.ativo) semMeteoros = false;
+
+        if (temCinturao && distance_traveled >= fimCinturao && semMeteoros && distance_traveled < fimCinturao + 8000) {
+            if ((int)(GetTime() * 2) % 2 == 0) {
+                DrawText("ZONA SEGURA! PODE ACELERAR!", 400, 200, 25, GREEN);
+            }
+        }
+
+        // 2. Lógica de Máximo de Meteoros (Cinturão OU Velocidade Baixa)
+        bool dentroDoCinturao = (temCinturao && distance_traveled >= inicioCinturao && distance_traveled <= fimCinturao);
+        bool velocidadeBaixa = (jogador->minhaNave->velocidadeAtual <= 500.0f);
+        
+        int limiteMeteoros = 0;
+        if (!winn && !boss) {
+            if (dentroDoCinturao) limiteMeteoros = densidadeCinturao; // Ex: 8 ao mesmo tempo
+            else if (velocidadeBaixa) limiteMeteoros = 2; // Farm tranquilo: 2 ao mesmo tempo
+        }
+
+        // 2.5 Conta meteoros e checa se já tem um de emergência na tela
+        int meteorosAtivos = 0;
+        bool temEmergenciaNaTela = false;
+        for (auto& m : meteoros) {
+            if (m.ativo) {
+                meteorosAtivos++;
+                if (m.isEmergencia) temEmergenciaNaTela = true;
+            }
+        }
+
+        // --- SISTEMA ANTI-SOFTLOCK (Meteoro de Emergência) ---
+        // Se a nave está parada E sem combustível, spawna 1 meteoro viajante de vez em quando
+        if (jogador->minhaNave->velocidadeAtual <= 0.0f && jogador->minhaNave->combustivelAtual <= 0.0f && !temEmergenciaNaTela && !winn && !boss) {
+            // Chance rara por frame para ele aparecer ocasionalmente, e não toda hora
+            if (GetRandomValue(0, 100) == 1) { 
+                Meteoro emg;
+                emg.ativo = true;
+                emg.isEmergencia = true;
+                emg.fall = 0; 
+                emg.rot = 0.0f;
+                emg.rotSpeed = (float)GetRandomValue(30, 150) * ((GetRandomValue(0, 1) == 0) ? 1.0f : -1.0f);
+
+                // Sorteia a origem: 0=Topo, 1=Esquerda, 2=Direita
+                int origem = GetRandomValue(0, 2);
+                if (origem == 0) { // Topo
+                    emg.pos = { (float)GetRandomValue(100, 1100), -100.0f };
+                    emg.velIndependente = { (float)GetRandomValue(-30, 30) / 10.0f, (float)GetRandomValue(20, 50) / 10.0f };
+                } else if (origem == 1) { // Esquerda
+                    emg.pos = { -100.0f, (float)GetRandomValue(50, 400) };
+                    emg.velIndependente = { (float)GetRandomValue(20, 50) / 10.0f, (float)GetRandomValue(-10, 30) / 10.0f };
+                } else { // Direita
+                    emg.pos = { 1300.0f, (float)GetRandomValue(50, 400) };
+                    emg.velIndependente = { (float)GetRandomValue(-50, -20) / 10.0f, (float)GetRandomValue(-10, 30) / 10.0f };
+                }
+                meteoros.push_back(emg);
+                meteorosAtivos++;
+            }
+        }
+
+        // --- SPAWN NORMAL DE METEOROS ---
+        while (meteorosAtivos < limiteMeteoros) {
+            Meteoro novo;
+            novo.pos.x = (float)GetRandomValue(30, 1150);
+            novo.pos.y = (float)GetRandomValue(-800, -100); 
+            novo.fall = (float)GetRandomValue(4, 9);
+            novo.rot = 0.0f;
+            novo.rotSpeed = (float)GetRandomValue(30, 150) * ((GetRandomValue(0, 1) == 0) ? 1.0f : -1.0f);
+            novo.ativo = true;
+            novo.isEmergencia = false;
+            novo.velIndependente = {0.0f, 0.0f};
+            meteoros.push_back(novo);
+            meteorosAtivos++;
+        }
+
+        // 3. Física, Desenho e Colisão de TODOS os Meteoros
+        for (int m = 0; m < (int)meteoros.size(); m++) {
+            if (!meteoros[m].ativo) continue;
+
+            // Movimento rasgando a tela
+            // Movimento: Independente se for emergência, relativo se for normal
+            if (meteoros[m].isEmergencia) {
+                meteoros[m].pos.x += meteoros[m].velIndependente.x * mult;
+                meteoros[m].pos.y += meteoros[m].velIndependente.y * mult;
+            } else {
+                meteoros[m].pos.y += (meteoros[m].fall * world_speed_factor) * mult;
+            }
+            meteoros[m].rot += meteoros[m].rotSpeed * GetFrameTime();
+
+            // Desenho
+            float w = (float)meteoro_tex.width; 
+            float h = (float)meteoro_tex.height;
+            DrawTexturePro(meteoro_tex, { 0.0f, 0.0f, w, h }, 
+                           { meteoros[m].pos.x + w/2.0f, meteoros[m].pos.y + h/2.0f, w, h }, 
+                           { w/2.0f, h/2.0f }, meteoros[m].rot, WHITE);
+
+            // Colisão com a Nave (Escudo e I-frames)
+            if (jogador->minhaNave->escudoAtual > 0 && 
+                meteoros[m].pos.y >= nave_y - 10 && meteoros[m].pos.y <= nave_y + 80 && 
+                meteoros[m].pos.x >= nave_x - 30 && meteoros[m].pos.x <= nave_x + 65) {
+                
+                if (jogador->minhaNave->iFrame <= 0.0f) {
+                    jogador->minhaNave->escudoAtual--;
+                    jogador->minhaNave->iFrame = 2.0f;
+                    PlaySound(bomb);
+                }
+                meteoros[m].ativo = false; // Meteoro explode no escudo
+            }
+
+            // Limpeza: Se saiu da tela, desativa para o Spawner criar outro lá em cima
+            if (meteoros[m].pos.y > 800 || meteoros[m].pos.x < -250 || meteoros[m].pos.x > 1450 || meteoros[m].pos.y < -250) {
+                meteoros[m].ativo = false;
+            }
         }
         
-        if (!meter && !winn) {
-            wait++;
-            bump++;
-                //CHAMAR EXPLOSAO METEORO
-            if (wait == 1) { // Garante que só roda 1 vez
-                AdicionarExplosao({(float)expm_x + 30, (float)expm_y + 30}, METEOR);
-            }
-            if (wait > 30) {
-                meter = true;
-                wait = 0;
-                bump = 0;
-                bot_y = GetRandomValue(-800, -10);
-                bot_x = GetRandomValue(30, 1150);
-                fall = GetRandomValue(vmin, vmax);
-                meteoro_rot_speed = (float)GetRandomValue(30, 150) * ((GetRandomValue(0, 1) == 0) ? 1.0f : -1.0f);
-                meteoro_x = bot_x;
-                meteoro_y = bot_y;
-            }
-            if (pontos >= 3 && pontos <= 6) {
-                vmin = 1;
-                vmax = 4;
-            }
-            if (pontos >= 7 && pontos <= 9) {
-                vmin = 2;
-                vmax = 5;
-            }
-            if (boss) {
-                vmax = 6;
+        // Remove os inativos da memória para o vetor não crescer infinitamente
+        for (int m = 0; m < (int)meteoros.size(); m++) {
+            if (!meteoros[m].ativo) {
+                meteoros.erase(meteoros.begin() + m);
+                m--;
             }
         }
+
         exp_x = nave_x;
         hitbox1x = nave_x + 10; hitbox2x = nave_x + 38;
         exp_x = nave_x;
@@ -1146,7 +1323,8 @@ void desenhar() {
         if (boss && !winn) {
             if (chefeFinal->vida > 0) {
                 bool tocaSomDano = false;
-                chefeFinal->ComportamentoVivo(mult, GetFrameTime(), vida, death_x, death_y, tocaSomDano);
+                // Passamos o 'jogador' em vez da 'vida', e a hitbox ajustada (nave_x + 20, nave_y)
+                chefeFinal->ComportamentoVivo(mult, GetFrameTime(), jogador, nave_x + 20, nave_y, tocaSomDano);
                 
                 // O Boss cuida da matemática, o Jogo apenas toca o som se foi engatilhado
                 if (tocaSomDano && death_sound_delay == 0) { 
@@ -1181,17 +1359,18 @@ void desenhar() {
             DrawEllipse(tiroenemy_x, tiroenemy_y, 3.0f, 12.0f, WHITE);
             EndBlendMode();
 
-            // Desce respeitando as velocidades do mundo (mais lento que o boss)
-            float speed_mod = turbo_on ? 4.0f : (freio_on ? 0.3f : 1.0f);
-            tiroenemy_y += 3.5f * speed_mod * mult; 
+            // O inimigo está voando do seu lado. O tiro viaja na velocidade DELE, ignora o mundo!
+            tiroenemy_y += 5.0f * mult;
 
             if (tiroenemy_y > 750) tiroenemy_ativo = false;
 
-            // Colisão com o Player
-            if (vida > 0 && tiroenemy_y >= death_y && tiroenemy_y <= death_y + 80 && tiroenemy_x >= death_x && tiroenemy_x <= death_x + 50) {
+            // Colisão do Tiro Inimigo com o Player
+            // nave_x + 20 empurra a hitbox do tiro para a direita, centralizando na lataria
+            if (vida > 0 && tiroenemy_y >= nave_y && tiroenemy_y <= nave_y + 80 && 
+                tiroenemy_x >= nave_x + 20 && tiroenemy_x <= nave_x + 70) {
                 if (death_sound_delay == 0) { PlaySound(bomb); death_sound_delay = 20; }
-                vida = 0;
-                tiroenemy_ativo = false; // Some ao acertar
+                jogador->minhaNave->escudoAtual--;
+                tiroenemy_ativo = false; 
             }
         }
 
@@ -1214,6 +1393,17 @@ void desenhar() {
                     d.valor = (j == 0) ? 2 : 10; // Ouro vale 2, Ferros valem 10 cada
                     drops.push_back(d);
                 }
+                // 2.5 DROP DE COMBUSTÍVEL (Exclusivo do Inimigo)
+                for(int j=0; j<3; j++) { // Solta 3 bolhas de energia
+                    Drop d; 
+                    d.pos = {(float)enemyx+30, (float)enemyy+20};
+                    float ang = GetRandomValue(180, 360) * DEG2RAD; 
+                    float spd = GetRandomValue(30, 60) / 10.0f; 
+                    d.vel = { cosf(ang) * spd, sinf(ang) * spd };
+                    d.isCombustivel = true; // <--- É COMBUSTÍVEL
+                    d.valor = 15; // Cada bolha recupera 15 de combustível
+                    drops.push_back(d);
+                }
 
                 pontos += 5; // Recompensa extra
                 enemy = false;
@@ -1224,7 +1414,7 @@ void desenhar() {
                 DrawTexture(enemynav, enemyx, enemyy, enemyColor);
                 
                 // Barra de Vida / Texto em cima
-                DrawText(TextFormat("%d", enemylife), enemyx + 10, enemyy - 25, 20, RED);
+                DrawText(TextFormat("%d", enemylife), enemyx + 10, enemyy - 5, 20, RED);
 
                 if(enemyy < 150) enemyy += (int)(2 * mult);
                 if(enemyy >= 150){
@@ -1260,13 +1450,6 @@ void desenhar() {
                 quit = true;
             }
         }
-        if ((bot_y >= death_y - 30 && bot_y <= death_y + 50 && bot_x >= death_x - 50 && bot_x <= death_x + 60)) {
-            if (death_sound_delay == 0) {
-                PlaySound(bomb);
-                death_sound_delay = 20; // Atraso de 10 frames
-            }
-            vida = 0;
-        }
         if (death_sound_delay > 0) {
             death_sound_delay--;
             if (death_sound_delay == 0 && vida == 0) {
@@ -1289,10 +1472,14 @@ void desenhar() {
             }
             if (IsKeyPressed(KEY_R)) {
                 winn = false;
-                vida = 1;
+                vida = 10;
+                jogador->minhaNave->escudoAtual=1;
                 pontos = 1;
                 bum = 0;
                 boss_defeated = false;
+                jogador->minhaNave->combustivelAtual = jogador->minhaNave->combustivelMaximo;
+                //jogador->minhaNave->velocidadeAtual = (float)GetRandomValue(80, 2500); // Sorteia o lançamento de novo
+                IniciarCinturao();
                 if (boss) chefeFinal->Resetar(); 
             }
         }
@@ -1388,11 +1575,17 @@ int main() {
     chefeFinal = new Boss();
     UnloadImage(imgExp);
 
+    chefeFinal = new Boss();
+    jogador = new Player("Goku"); // Cria o player e a nave dele automaticamente
+    
+    // Simula o resultado aleatório do futuro minigame de lançamento (ex: 80 a 200 de vel inicial)
+    jogador->minhaNave->velocidadeAtual = (float)GetRandomValue(10, 100);
+
+    IniciarCinturao();
+
     // --- INICIALIZAÇÃO DAS VARIÁVEIS ---
-    fall = GetRandomValue(1, 4); exp_x = nave_x; exp_y = nave_y; death_x = nave_x + 25; death_y = nave_y + 10; fire_x = nave_x + 30;
+    exp_x = nave_x; exp_y = nave_y; death_x = nave_x - 30; death_y = nave_y + 10; fire_x = nave_x + 30;
     fire_y = nave_y + 84; sol_x = GetRandomValue(10, 1100); sol_y = GetRandomValue(10, 400);
-    bot_x = GetRandomValue(50, 1100); bot_y = -10; expm_x = bot_x + 200; expm_y = bot_y + 100; meteoro_x = bot_x; meteoro_y = bot_y;
-    meteoro_rot_speed = (float)GetRandomValue(30, 150) * ((GetRandomValue(0, 1) == 0) ? 1.0f : -1.0f);
     hitbox1x = nave_x + 10; hitbox1y = nave_y + 40; hitbox2x = nave_x + 38; hitbox2y = nave_y + 10;
 
     // --- INICIALIZAÇÃO DO FUNDO DE ESTRELAS ---
