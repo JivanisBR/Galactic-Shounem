@@ -1,4 +1,6 @@
 #include "Boss.h"
+#include "Player.h"
+#include "Nave.h"
 
 Boss::Boss() {
     escalaBoss = 0.15f;
@@ -264,7 +266,7 @@ void Boss::AtualizarEDesenhar() {
     EndTextureMode();
 }
 
-void Boss::ComportamentoVivo(float mult, float dt, int& vidaPlayer, int death_x, int death_y, bool& tocaSomDano) {
+void Boss::ComportamentoVivo(float mult, float dt, Player* jogador, int death_x, int death_y, bool& tocaSomDano) {
     AtualizarEDesenhar();
 
     if (y < 0) y += (int)(2 * mult);
@@ -290,14 +292,31 @@ void Boss::ComportamentoVivo(float mult, float dt, int& vidaPlayer, int death_x,
     for (int t = 0; t < MAX_TIROS_BOSS; t++) {
         if (tirosBoss[t].ativo) {
             tirosBoss[t].pos.y += 400.0f * dt; 
-            DrawEllipse((int)tirosBoss[t].pos.x, (int)tirosBoss[t].pos.y, 4.0f, 15.0f, RED);
-            DrawEllipse((int)tirosBoss[t].pos.x, (int)tirosBoss[t].pos.y, 2.0f, 10.0f, ORANGE);
+
+            // 1. Aura Externa (Larga e transparente - cria o "glow" no espaço)
+            DrawEllipse((int)tirosBoss[t].pos.x, (int)tirosBoss[t].pos.y, 8.0f, 20.0f, ColorAlpha(RED, 0.3f));
+            
+            // 2. Aura Intermediária (Mais concentrada)
+            DrawEllipse((int)tirosBoss[t].pos.x, (int)tirosBoss[t].pos.y, 4.0f, 15.0f, ColorAlpha(ORANGE, 0.6f));
+            
+            // 3. Núcleo de Plasma (Fino e Branco - essencial para parecer luz real)
+            DrawEllipse((int)tirosBoss[t].pos.x, (int)tirosBoss[t].pos.y, 2.0f, 10.0f, WHITE);
 
             // Verifica colisão do tiro do Boss com o Player
-            if (vidaPlayer > 0 && tirosBoss[t].pos.y >= death_y && tirosBoss[t].pos.y <= death_y + 80 && 
-                tirosBoss[t].pos.x >= death_x && tirosBoss[t].pos.x <= death_x + 50) {
-                tocaSomDano = true; // Avisa o jogo principal para tocar o som
-                vidaPlayer = 0;
+            // Colisão do Tiro do Boss com a Nave (Escudo e I-frames)
+            // Mantive a largura + 65 pra ficar igual a hitbox perfeita que fizemos antes!
+            if (jogador->minhaNave->escudoAtual > 0 && 
+                tirosBoss[t].pos.y >= death_y && tirosBoss[t].pos.y <= death_y + 80 && 
+                tirosBoss[t].pos.x >= death_x && tirosBoss[t].pos.x <= death_x + 65) {
+                
+                // Se NÃO está invulnerável, toma dano
+                if (jogador->minhaNave->iFrame <= 0.0f) {
+                    jogador->minhaNave->escudoAtual--;
+                    jogador->minhaNave->iFrame = 2.0f; // Fica invulnerável por 1 seg
+                    tocaSomDano = true; // Avisa o jogo principal para tocar o som de dano
+                }
+                
+                // O tiro do boss sempre some ao bater no escudo
                 tirosBoss[t].ativo = false;
             }
 

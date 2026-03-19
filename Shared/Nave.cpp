@@ -6,9 +6,12 @@ Nave::Nave() {
 
     // Status Iniciais de Voo
     velocidadeAtual = 0.0f; 
-    velocidadeMaxima = 5000.0f;
+    velocidadeMaxima = 500000.0f;
     combustivelMaximo = 100.0f;
     combustivelAtual = combustivelMaximo;
+    escudoMaximo = 10;
+    escudoAtual = escudoMaximo;
+    iFrame = 0.0f;
     
     // Níveis iniciais (Upáveis no futuro)
     forcaTurbo = 250.0f;          // Ganha 50 de vel por seg
@@ -29,7 +32,7 @@ Nave::~Nave() {
 
 // O Cérebro da movimentação espacial
 void Nave::AtualizarVoo(float dt, bool usandoTurbo, bool usandoFreio) {
-    
+
     // MATEMÁTICA DA ECONOMIA: 
     // Se eficiencia for 0, gasta o valor base (10). 
     // Se for 100 (100%), o divisor vira 2.0, então gasta metade (5).
@@ -44,7 +47,7 @@ void Nave::AtualizarVoo(float dt, bool usandoTurbo, bool usandoFreio) {
     // 2. Lógica do Freio (Retropropulsores)
     if (usandoFreio && combustivelAtual > 0.0f) {
         combustivelAtual -= consumoReal * dt;
-        velocidadeAtual -= forcaTurbo * dt; // Freia com a mesma força do motor
+        velocidadeAtual -= (forcaTurbo * 2.0f) * dt; //Freia com o dobro de força pq sim
         
         if (velocidadeAtual < 0.0f) velocidadeAtual = 0.0f; 
     }

@@ -19,6 +19,10 @@ public:
     float forcaTurbo;            // O quanto a velocidade sobe por segundo
     float eficienciaCombustivel; // Nível de economia (0 = gasta normal)
     float taxaConsumoBase;       // O gasto padrão de combustível por segundo
+    int escudoMaximo;
+    int escudoAtual;
+    
+    float iFrame; // Cronômetro do tempo de invencibilidad
     
     // Combate
     float cooldownTiro;
