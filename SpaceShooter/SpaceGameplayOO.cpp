@@ -1288,10 +1288,34 @@ void desenhar() {
                 
                 if (jogador->minhaNave->iFrame <= 0.0f) {
                     jogador->minhaNave->escudoAtual--;
-                    jogador->minhaNave->iFrame = 2.0f;
+                    jogador->minhaNave->iFrame = 3.0f;
                     PlaySound(bomb);
                 }
-                meteoros[m].ativo = false; // Meteoro explode no escudo
+
+                // --- NOVA LÓGICA DE EXPLOSÃO NO ESCUDO ---
+                // Pega os centros exatos
+                float centroEscudoX = nave_x + 50.0f;
+                float centroEscudoY = nave_y + 45.0f;
+                float centroMeteoroX = meteoros[m].pos.x + 30.0f;
+                float centroMeteoroY = meteoros[m].pos.y + 20.0f;
+
+                // Calcula a direção do impacto (Vetor Direcional)
+                float dx = centroMeteoroX - centroEscudoX;
+                float dy = centroMeteoroY - centroEscudoY;
+                float distancia = sqrt(dx*dx + dy*dy);
+
+                Vector2 posExplosao = {centroMeteoroX, centroMeteoroY};
+
+                // Empurra a explosão exatamante para a "casca" do escudo (raio de 75 pixels)
+                if (distancia > 0) {
+                    posExplosao.x = centroEscudoX + (dx / distancia) * 75.0f;
+                    posExplosao.y = centroEscudoY + (dy / distancia) * 75.0f;
+                }
+
+                // Chama a explosão (Usei METEOR para soltar as pedrinhas cinzas)
+                AdicionarExplosao(posExplosao, METEOR); 
+                
+                meteoros[m].ativo = false; // Desativa a pedra
             }
 
             // Limpeza: Se saiu da tela, desativa para o Spawner criar outro lá em cima
