@@ -2,8 +2,14 @@
 #include "Nave.h"
 
 // O Construtor: Roda na hora que o jogador é criado no jogo
-Player::Player(std::string nomeInicial) {
-    nome = nomeInicial;
+Player::Player(std::string nome) {
+    this->nome = nome;
+    
+    // Inicialização do Ki
+    this->pdlMaximo = GetRandomValue(2500000, 3500000); // Nível Entidade
+    this->pdlBase = 50000;                              // Suprimido
+    this->pdlAtual = this->pdlBase;
+    this->corAura = ColorFromHSV((float)GetRandomValue(0, 360), 0.8f, 0.9f);
     
     // Status Iniciais (Level 1)
     vidaMaxima = 100;
@@ -13,8 +19,6 @@ Player::Player(std::string nomeInicial) {
     forca = 10;
     defesa = 10;
     velocidade = 10;
-
-    corDoKi = YELLOW; // Modo Super Sayajin por padrão!
 
     level = 1;
     xpAtual = 0;

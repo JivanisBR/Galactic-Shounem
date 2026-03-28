@@ -4,6 +4,8 @@
 #include <string>
 #include <cmath>
 #include <algorithm>
+#include "Player.h"
+#include "Nave.h"
 
 //----------------------------------------------------------------------------------
 // ESTRUTURAS
@@ -12,6 +14,7 @@
 struct Raio {
     std::vector<Vector2> pontos;
     int timer_troca;
+    float espessura;
 };
 
 struct ParticulaAura {
@@ -121,27 +124,28 @@ std::string GerarNomeProcedural() {
     return nome;
 }
 
-// Agora aceita 'escala_comp' (multiplicador de comprimento)
-void RegenerarRaio(Raio& r, float raio_max, int min_seg, int max_seg, float escala_comp) {
+// Função de Raios Unificada (A escala define agressividade e espessura)
+void RegenerarRaio(Raio& r, float raio_base, int min_seg, int max_seg, float escala_forca) {
     r.pontos.clear();
     
     int segmentos = GetRandomValue(min_seg, max_seg);
     
     float angulo_base = (float)GetRandomValue(0, 360) * DEG2RAD;
-    float dist = raio_max * 0.4f;
+    float dist = raio_base * 0.4f;
     Vector2 atual = { cosf(angulo_base) * dist, sinf(angulo_base) * dist };
     r.pontos.push_back(atual);
 
-    // O offset base era 15. Agora multiplicamos pela escala.
-    // Se escala for 1.0, offset é 15. Se for 5.0, é 75 (gigante).
-    int limite_offset = (int)(15.0f * escala_comp); 
+    // O offset base (o quão "tremido" é o raio) escala com a força
+    int limite_offset = (int)(15.0f * escala_forca); 
 
     for (int i = 0; i < segmentos; ++i) {
         atual.x += GetRandomValue(-limite_offset, limite_offset);
         atual.y += GetRandomValue(-limite_offset, limite_offset);
         r.pontos.push_back(atual);
     }
+    
     r.timer_troca = GetRandomValue(5, 12); 
+    r.espessura = escala_forca; // Salva a espessura para usar no DrawLineEx!
 }
 
 // Configura uma estrela já criada com dados de RPG
@@ -378,13 +382,12 @@ int main(void)
         n.pos.x = cosf(anguloFinal) * distancia + espalhamento;
         n.pos.y = sinf(anguloFinal) * distancia + espalhamento;
 
-        // --- VISUAL (Mantendo EXATAMENTE o seu setup original) ---
+        // --- VISUAL ---
         // Cores HSV aleatórias (bonitas e variadas)
         n.cor_base = ColorFromHSV((float)GetRandomValue(0, 360), 0.6f, 0.5f);
         
-        int parts = 100; // Quantidade que você definiu e gostou
+        int parts = 100; 
         for(int p=0; p<parts; p++) {
-            // Seus offsets originais (eles são grandes, criando nuvens espalhadas)
             n.offsets_particulas.push_back({(float)GetRandomValue(-500, 300), (float)GetRandomValue(-200, 800)});
             n.tamanhos.push_back((float)GetRandomValue(40, 200));
             n.alphas.push_back(GetRandomValue(5, 20));
@@ -546,6 +549,52 @@ int main(void)
     UnloadImage(imgLogica);
     UnloadImage(imgVisual);
 
+    // --- INICIALIZAÇÃO DO PLAYER ---
+    Player* jogador = new Player("Kreits"); // Instancia o Player e a Nave
+    int estrelaAtualPlayer = -1;
+    float timerPingPlayer = 0.0f; 
+    
+    // --- CONTROLE VISUAL DE KI DO JOGADOR NO MAPA ---
+    EstadoKi playerEstadoKi = ESCONDIDO;
+    float playerEscalaMinima = (float)jogador->pdlBase / jogador->pdlMaximo;
+    float playerEscalaAtual = playerEscalaMinima;
+    float playerDiametroMax = 800.0f;
+
+    std::vector<Raio> playerRaios(12);
+    for(auto& r : playerRaios) RegenerarRaio(r, playerDiametroMax/2.0f, 8, 12, 4.0f);
+    
+    std::vector<ParticulaAura> playerParticulas(600);
+    for(auto& p : playerParticulas) {
+        p.vida = 0; p.offset = {0,0}; p.velocidade = {0,0}; p.cor = WHITE; p.negativa = false;
+        p.tam = (float)GetRandomValue(30, 60) / 10.0f;
+    }
+
+    // --- VARIÁVEIS DE ROTA ---
+    int destinoTracado = -1; 
+    int timerCliqueBotao = 0;
+    int indexEstrelaSelecionada = -1;
+
+    // CONTROLE DE EVENTOS
+    bool rotaTemCinturao = false;
+    float pctInicioCinturao = 0.0f; // Porcentagem de 0.0 a 1.0 (ex: 0.2 = começa aos 20% da viagem)
+    float pctFimCinturao = 0.0f;
+
+    // Busca todas as estrelas sem chefe
+    std::vector<int> estrelasSeguras;
+    for (int i = 0; i < (int)galaxia.size(); i++) {
+        if (!galaxia[i].tem_chefe) {
+            estrelasSeguras.push_back(i);
+        }
+    }
+
+    // Sorteia uma delas para ser o planeta natal
+    if (!estrelasSeguras.empty()) {
+        estrelaAtualPlayer = estrelasSeguras[GetRandomValue(0, estrelasSeguras.size() - 1)];
+        
+        // Bônus: Já centraliza a câmera onde o player nasceu!
+        camera.target = galaxia[estrelaAtualPlayer].pos;
+    }
+    
     // Variáveis de controle
     Estrela* estrelaFocada = nullptr; // Ponteiro para saber qual estrela o mouse está em cima
 
@@ -636,32 +685,29 @@ int main(void)
         if (IsKeyDown(KEY_DOWN)) wheel = -1.0f;
 
         if (wheel != 0) {
-            // Pega a posição do mouse no mundo para zoom focalizado (opcional, mas bom)
-            Vector2 mouseWorldPos = GetScreenToWorld2D(GetMousePosition(), camera);
-            
-            // Se usar teclado, foca no centro da tela pra não ficar tonto
-            if (IsKeyDown(KEY_UP) || IsKeyDown(KEY_DOWN)) mouseWorldPos = GetScreenToWorld2D({screenWidth/2.0f, screenHeight/2.0f}, camera);
-
-            camera.offset = GetMousePosition();
-            if (IsKeyDown(KEY_UP) || IsKeyDown(KEY_DOWN)) camera.offset = {screenWidth/2.0f, screenHeight/2.0f};
-            
-            camera.target = mouseWorldPos;
-
+            // PRIMEIRO: Calcula o zoom e o limite ANTES de mover a câmera
             float scaleFactor = 1.0f + (0.05f * fabsf(wheel)); // 0.05 = Zoom suave
             if (wheel < 0) scaleFactor = 1.0f / scaleFactor;
             
-            // CÁLCULO DO ZOOM MÍNIMO (Para ver o mapa todo)
-            // Qual zoom eu preciso pra encaixar 4000px em 1200px?
-            float minZoomX = (float)screenWidth / MAP_WIDTH;
-            float minZoomY = (float)screenHeight / MAP_HEIGHT;
-            // Pegamos o maior dos dois para garantir que cubra a tela (ou o menor pra ver bordas pretas)
-            // Vamos usar o maior para preencher bem.
             float piorCenarioZoom = (float)screenHeight / 6000.0f; 
-            
-            // Damos uma margem extra de 20% (multiplicando por 0.8) para não ficar colado na borda
             float minZoom = piorCenarioZoom * 0.8f; 
+            
+            float zoomProposto = camera.zoom * scaleFactor;
+            float zoomLimitado = Clamp(zoomProposto, minZoom, 3.0f);
 
-            camera.zoom = Clamp(camera.zoom * scaleFactor, minZoom, 3.0f);
+            // SEGUNDO: Só aplica a mudança de foco (target/offset) se o zoom REALMENTE for mudar
+            // Isso impede que rolar o scroll no limite empurre o mapa pro vazio
+            if (zoomLimitado != camera.zoom) {
+                Vector2 mouseWorldPos = GetScreenToWorld2D(GetMousePosition(), camera);
+                
+                if (IsKeyDown(KEY_UP) || IsKeyDown(KEY_DOWN)) mouseWorldPos = GetScreenToWorld2D({screenWidth/2.0f, screenHeight/2.0f}, camera);
+
+                camera.offset = GetMousePosition();
+                if (IsKeyDown(KEY_UP) || IsKeyDown(KEY_DOWN)) camera.offset = {screenWidth/2.0f, screenHeight/2.0f};
+                
+                camera.target = mouseWorldPos;
+                camera.zoom = zoomLimitado; // Aplica o zoom de fato
+            }
         }
 
         // 2. PAN (WASD) - Só move se NÃO estiver vendo o mapa todo
@@ -673,6 +719,10 @@ int main(void)
         if (IsKeyDown(KEY_S)) novaTarget.y += moveSpeed;
         if (IsKeyDown(KEY_A)) novaTarget.x -= moveSpeed;
         if (IsKeyDown(KEY_D)) novaTarget.x += moveSpeed;
+
+        if (IsKeyPressed(KEY_P)) {
+            timerPingPlayer = 3.0f; // Ativa o sinalizador por 3 segundos
+        }
 
         // 3. CLAMP (PRENDER A CÂMERA NAS BORDAS)
         // A matemática aqui é: Onde a borda da tela toca no mundo?
@@ -702,28 +752,202 @@ int main(void)
 
         camera.target = novaTarget;
 
-        // Detecção do Mouse (SCREEN TO WORLD)
+       // Detecção do Mouse (SCREEN TO WORLD)
         Vector2 mouseScreen = GetMousePosition();
         Vector2 mouseWorld = GetScreenToWorld2D(mouseScreen, camera);
         
         estrelaFocada = nullptr;
-        for (auto& e : galaxia) {
-            // HITBOX PADRONIZADA
-            // O raio é o tamanho do núcleo físico + 10px de margem (como você pediu)
-            float raioClick = e.tam_nucleo + 30.0f; 
+        int indexEstrelaFocada = -1; 
+        
+        for (int i = 0; i < galaxia.size(); i++) {
+            float raioClick = galaxia[i].tam_nucleo + 30.0f; 
             
-            // Detecta colisão apenas no centro físico
-            if (CheckCollisionPointCircle(mouseWorld, e.pos, raioClick)) {
-                estrelaFocada = &e;
+            if (CheckCollisionPointCircle(mouseWorld, galaxia[i].pos, raioClick)) {
+                estrelaFocada = &galaxia[i];
+                indexEstrelaFocada = i; 
                 break;
             }
         }
+
+        // --- SISTEMA DE CLIQUE E SELEÇÃO ---
+            // Primeiro verificamos se o mouse está em cima da UI para não deselecionar a estrela ao clicar no botão
+            bool mouseNaUI = false;
+            if (indexEstrelaSelecionada != -1) {
+                Vector2 screenPos = GetWorldToScreen2D(galaxia[indexEstrelaSelecionada].pos, camera);
+                int boxW = 260; int boxH = 140;
+                int boxX = screenPos.x + 30; int boxY = screenPos.y - 60;
+                if (boxX + boxW > screenWidth) boxX = screenPos.x - boxW - 30; 
+                if (boxY + boxH > screenHeight) boxY = screenPos.y - boxH;
+                if (boxY < 0) boxY = 10;
+                Rectangle boxRect = { (float)boxX, (float)boxY, (float)boxW, (float)boxH };
+                
+                if (CheckCollisionPointRec(mouseScreen, boxRect)) mouseNaUI = true;
+            }
+            
+            // Impede que clicar no botão "VISUAL: ON/OFF" feche a janela da estrela
+            Rectangle btnVisual = { (float)screenWidth - 140, 20, 120, 30 };
+            if (CheckCollisionPointRec(mouseScreen, btnVisual)) mouseNaUI = true;
+
+            // Se clicou com o botão esquerdo e não foi em cima de nenhum botão/menu...
+            if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && !mouseNaUI) {
+                if (indexEstrelaFocada != -1) {
+                    indexEstrelaSelecionada = indexEstrelaFocada; // Seleciona a nova estrela
+                } else {
+                    indexEstrelaSelecionada = -1; // Clicou no vazio, deseleciona e fecha a aba
+                }
+            }
+
+            // =============================================================
+        // UI FIXA (SCREEN SPACE)
+        // =============================================================
+        
+
         // --- UPDATE GERAL (FÍSICA, LÓGICA DE TIERS E EFEITOS) ---
         // --- VARIÁVEL DE CONTROLE DE FLUXO (THROTTLING) ---
         // Declaramos static para ela persistir entre os frames sem resetar
         // Isso impede que 100 inimigos decidam brilhar no mesmo frame
         static int timer_fluxo_ki = 0;
         if (timer_fluxo_ki > 0) timer_fluxo_ki--;
+
+
+        // --- INPUT E LÓGICA DO KI DO JOGADOR 
+        if (estrelaAtualPlayer >= 0) {
+            // Velocidade do dimer
+            float velocidadeDimer = 0.006f; 
+
+            // Se segura o C, sobe o Ki
+            if (IsKeyDown(KEY_C)) {
+                playerEscalaAtual += velocidadeDimer;
+                if (playerEscalaAtual > 1.0f) playerEscalaAtual = 1.0f;
+                playerEstadoKi = ELEVANDO;
+            } 
+            // Se segura o Z, abaixa o Ki
+            else if (IsKeyDown(KEY_Z)) {
+                playerEscalaAtual -= velocidadeDimer;
+                if (playerEscalaAtual < playerEscalaMinima) playerEscalaAtual = playerEscalaMinima;
+                playerEstadoKi = SUPRIMINDO;
+            } 
+            // Se não está apertando nada, estabiliza onde parou!
+            else {
+                if (playerEscalaAtual <= playerEscalaMinima) {
+                    playerEstadoKi = ESCONDIDO;
+                } else {
+                    playerEstadoKi = MAXIMO; // Aqui "MAXIMO" significa apenas que está estabilizado
+                    
+                    // Pequeno efeito de pulsação APENAS se o Ki estiver no talo (100%)
+                    if (playerEscalaAtual >= 1.0f) {
+                        if(GetRandomValue(0,10) > 8) playerEscalaAtual = 1.01f; 
+                        else playerEscalaAtual = 1.0f;
+                    }
+                }
+            }
+
+            // Interpolação Matemática do Nível de Poder (Atualiza o número em tempo real)
+            float rangeP = 1.0f - playerEscalaMinima;
+            float pctP = (playerEscalaAtual - playerEscalaMinima) / rangeP;
+            if (pctP < 0) pctP = 0; if (pctP > 1) pctP = 1;
+            
+            jogador->pdlAtual = jogador->pdlBase + (int)((jogador->pdlMaximo - jogador->pdlBase) * pctP);
+
+            // Animação de Partículas e Raios
+            if (playerEscalaAtual > playerEscalaMinima + 0.01f) {
+                // O tamanho físico da aura continua proporcional ao PDL
+                float raio_visual = (float)jogador->pdlAtual / 2000.0f;
+                if (raio_visual < 15) raio_visual = 15;
+
+                // Define as propriedades dos raios baseadas estritamente no PDL ATUAL
+                float espessuraRaio = 1.0f;
+                int minSeg = 3; int maxSeg = 6; // Curtos e retos por padrão
+                int chanceGerar = 5;            // Raros por padrão
+                
+                // Tier 1: Suprimido (até 150k) -> Raios quase invisíveis
+                if (jogador->pdlAtual < 150000) {
+                    espessuraRaio = 1.0f; minSeg = 2; maxSeg = 4; chanceGerar = 2;
+                }
+                // Tier 2: Guerreiro Z (até 600k) -> Raios finos, médios
+                else if (jogador->pdlAtual < 600000) {
+                    espessuraRaio = 1.5f; minSeg = 3; maxSeg = 6; chanceGerar = 8;
+                }
+                // Tier 3: General (até 1.5M) -> Raios grossos, densos
+                else if (jogador->pdlAtual < 1500000) {
+                    espessuraRaio = 3.0f; minSeg = 5; maxSeg = 10; chanceGerar = 20;
+                }
+                // Tier 4: Entidade/Deus (Acima de 1.5M) -> Caos Total
+                else {
+                    espessuraRaio = 5.0f; minSeg = 8; maxSeg = 15; chanceGerar = 40;
+                }
+
+                // Atualiza os raios usando os parâmetros do Tier
+                for (auto& r : playerRaios) {
+                    r.timer_troca--;
+                    // Só regenera se o timer acabou E passar na chance do Tier
+                    if (r.timer_troca <= 0 && GetRandomValue(0, 100) < chanceGerar) {
+                        // O tamanho do raio segue o raio_visual da aura
+                        RegenerarRaio(r, raio_visual, minSeg, maxSeg, espessuraRaio);
+                    }
+                    // Se não gerou, apaga o raio antigo para não ficar flutuando
+                    else if (r.timer_troca <= 0) {
+                        r.pontos.clear();
+                        r.timer_troca = GetRandomValue(10, 30); // Espera um pouco pra tentar de novo
+                    }
+                }
+            }
+            float raio_visual_particulas = (float)jogador->pdlAtual / 2000.0f;
+            if (raio_visual_particulas < 15) raio_visual_particulas = 15;
+
+            int particulasAlvo = (jogador->pdlAtual - 50000) / 5000; 
+            if (particulasAlvo < 0) particulasAlvo = 0;
+            if (particulasAlvo > 600) particulasAlvo = 600;
+
+            int chanceNegativa = 0;
+            if (jogador->pdlAtual > 1500000) {
+                chanceNegativa = (jogador->pdlAtual - 1500000) / 30000; 
+                if (chanceNegativa > 50) chanceNegativa = 50; 
+            }
+
+            int indexParticula = 0;
+            for (auto& p : playerParticulas) {
+                // 1. ATUALIZA AS VIVAS
+                if (p.vida > 0.0f) {
+                    p.offset.x += p.velocidade.x; 
+                    p.offset.y += p.velocidade.y;
+                    float distSq = (p.offset.x*p.offset.x) + (p.offset.y*p.offset.y);
+                    
+                    if (p.negativa) { 
+                        if (distSq < 100.0f) p.vida = 0.0f; 
+                    } else { 
+                        p.vida -= 0.015f; 
+                        if (p.vida <= 0.0f || distSq > (raio_visual_particulas * raio_visual_particulas * 2.0f)) p.vida = 0.0f; 
+                    }
+                }
+                
+                // 2. GERA NOVAS
+                if (p.vida <= 0.0f && indexParticula < particulasAlvo) {
+                    p.vida = 1.0f; 
+                    
+                    if (GetRandomValue(0, 100) < chanceNegativa) { 
+                        p.negativa = true; 
+                        p.cor = BLACK;
+                        float ang = GetRandomValue(0, 360) * DEG2RAD;
+                        float raioSpawn = raio_visual_particulas * 1.5f; 
+                        
+                        p.offset = { cosf(ang) * raioSpawn, sinf(ang) * raioSpawn };
+                        float vel = GetRandomValue(40, 80) / 10.0f;
+                        p.velocidade = { -cosf(ang) * vel, -sinf(ang) * vel };
+                        p.tam = GetRandomValue(30, 60) / 10.0f;
+                    } else { 
+                        p.negativa = false;
+                        p.offset = { (float)GetRandomValue(-10, 10), (float)GetRandomValue(-10, 10) };
+                        float ang = GetRandomValue(0, 360) * DEG2RAD;
+                        float vel = GetRandomValue(25, 55) / 10.0f; 
+                        p.velocidade = { cosf(ang) * vel, sinf(ang) * vel };
+                        p.cor = GetRandomValue(0, 1) ? WHITE : jogador->corAura;
+                        p.tam = GetRandomValue(30, 70) / 10.0f;
+                    }
+                }
+                indexParticula++;
+            }
+        }
 
         // --- UPDATE GERAL ---
         for (int i = 0; i < galaxia.size(); i++) {
@@ -944,7 +1168,7 @@ int main(void)
                 // Só desenha se tiver chefe e Ki visível
                 if (e.tem_chefe && e.nivel_atual > 1000) {
 
-                    // A. AURA SUAVE (O Gradiente que você gosta)
+                    // A. AURA SUAVE
                     // Calcula raio baseado no poder atual (ajuste o divisor 2000.0f para calibrar tamanho)
                     float raio_base = (float)e.nivel_atual / 2000.0f; 
                     if (raio_base < 15.0f) raio_base = 15.0f;
@@ -992,6 +1216,40 @@ int main(void)
                     }
                 }
             }
+
+            // --- DRAW KI DO JOGADOR (LUZ) ---
+            if (estrelaAtualPlayer >= 0) {
+                Vector2 posP = galaxia[estrelaAtualPlayer].pos;
+                
+                // Desenha Aura e Raios apenas se o Ki estiver alto
+                if (jogador->pdlAtual > 100000) {
+                    float raio_base = (float)jogador->pdlAtual / 2000.0f;
+                    float pulso = sin(GetTime() * 3.0f) * (raio_base * 0.05f);
+                    float raio_final = raio_base + pulso;
+
+                    DrawCircleGradient(posP.x, posP.y, raio_final, ColorAlpha(jogador->corAura, 0.6f), BLANK);
+                    DrawCircleGradient(posP.x, posP.y, raio_final * 0.5f, ColorAlpha(WHITE, 0.5f), BLANK);
+
+                    for (const auto& r : playerRaios) {
+                         if (r.pontos.size() > 1) {
+                            for (size_t i = 0; i < r.pontos.size() - 1; ++i) {
+                                Vector2 p1 = {posP.x + r.pontos[i].x, posP.y + r.pontos[i].y};
+                                Vector2 p2 = {posP.x + r.pontos[i+1].x, posP.y + r.pontos[i+1].y};
+                                DrawLineEx(p1, p2, r.espessura, ColorAlpha(jogador->corAura, 0.8f));
+                                DrawLineEx(p1, p2, r.espessura * 0.4f, WHITE); 
+                            }
+                        }
+                    }
+                }
+
+                // Desenha as partículas POSITIVAS de forma independente (Sem trava de PDL!)
+                for (const auto& p : playerParticulas) {
+                    if (p.vida > 0.0f && !p.negativa) {
+                        DrawCircleV({posP.x + p.offset.x, posP.y + p.offset.y}, p.tam, ColorAlpha(p.cor, p.vida));
+                        DrawPixelV({posP.x + p.offset.x, posP.y + p.offset.y}, WHITE);
+                    }
+                }
+            }
             EndBlendMode(); // FIM DO MODO ADITIVO
 
             // =============================================================
@@ -1020,27 +1278,175 @@ int main(void)
 
                 // E. ESTRELA FÍSICA (NÚCLEO)
                 Color corEstrela = WHITE;
-                if (&e == estrelaFocada) corEstrela = GREEN;
+                bool estaFocadaOuSelecionada = (&e == estrelaFocada) || (indexEstrelaSelecionada != -1 && &e == &galaxia[indexEstrelaSelecionada]);
+
+                if (estaFocadaOuSelecionada) corEstrela = GREEN;
                 
                 DrawStarShape(e.pos, e.tam_nucleo, corEstrela);
 
                 // Indicador de seleção
-                if (&e == estrelaFocada) {
+                if (estaFocadaOuSelecionada) {
                      DrawCircleLines(e.pos.x, e.pos.y, e.tam_nucleo + 12.0f, GREEN);
                 }
+
+                
+            }
+            
+                // --- DRAW KI DO JOGADOR (PARTÍCULAS NEGATIVAS) ---
+            if (estrelaAtualPlayer >= 0) {
+                Vector2 posP = galaxia[estrelaAtualPlayer].pos;
+                // Desenha de forma independente (Sem trava de PDL!)
+                for (const auto& p : playerParticulas) {
+                    if (p.vida > 0.0f && p.negativa) {
+                        DrawCircleV({posP.x + p.offset.x, posP.y + p.offset.y}, p.tam - 2, BLACK);
+                        DrawCircleV({posP.x + 7 + p.offset.x + 9, posP.y + p.offset.y}, p.tam - 2, WHITE);
+                    }
+                }
+            }
+            
+            // =============================================================
+            // 3.5 ROTA TRAÇADA (Linha Bicolor com Glow Aditivo)
+            // =============================================================
+            if (destinoTracado >= 0 && destinoTracado < galaxia.size() && estrelaAtualPlayer >= 0) {
+                Vector2 posOrigem = galaxia[estrelaAtualPlayer].pos;
+                Vector2 posDestino = galaxia[destinoTracado].pos;
+                
+                if (rotaTemCinturao) {
+                    Vector2 pontoInicioEvento = {
+                        posOrigem.x + (posDestino.x - posOrigem.x) * pctInicioCinturao,
+                        posOrigem.y + (posDestino.y - posOrigem.y) * pctInicioCinturao
+                    };
+                    Vector2 pontoFimEvento = {
+                        posOrigem.x + (posDestino.x - posOrigem.x) * pctFimCinturao,
+                        posOrigem.y + (posDestino.y - posOrigem.y) * pctFimCinturao
+                    };
+                    
+                    // --- 1. CAMADA DE GLOW (Brilho no Fundo) ---
+                    BeginBlendMode(BLEND_ADDITIVE);
+                    DrawLineEx(posOrigem, pontoInicioEvento, 20.0f, ColorAlpha(GREEN, 0.4f));          
+                    DrawLineEx(pontoInicioEvento, pontoFimEvento, 28.0f, ColorAlpha(RED, 0.4f));       
+                    DrawLineEx(pontoFimEvento, posDestino, 20.0f, ColorAlpha(GREEN, 0.4f));
+                    EndBlendMode();
+
+                    // --- 2. CAMADA SÓLIDA (Núcleo Mais Grosso) ---
+                    DrawLineEx(posOrigem, pontoInicioEvento, 6.0f, GREEN);          
+                    DrawLineEx(pontoInicioEvento, pontoFimEvento, 10.0f, RED);       
+                    DrawLineEx(pontoFimEvento, posDestino, 6.0f, GREEN);            
+                    
+                    Vector2 meioEvento = {
+                        (pontoInicioEvento.x + pontoFimEvento.x) / 2.0f,
+                        (pontoInicioEvento.y + pontoFimEvento.y) / 2.0f
+                    };
+                    
+                    // Alerta Pulsante com Glow
+                    float pulsoAlerta = sin(GetTime() * 15.0f) * 4.0f;
+                    BeginBlendMode(BLEND_ADDITIVE);
+                    DrawCircleLines(meioEvento.x, meioEvento.y, 18.0f + pulsoAlerta, ColorAlpha(RED, 0.5f));
+                    EndBlendMode();
+                    DrawCircleLines(meioEvento.x, meioEvento.y, 14.0f + pulsoAlerta, RED);
+                    
+                    // Exclamação branca para maior contraste dentro do vermelho
+                    int tamFonte = 20 + (int)pulsoAlerta;
+                    int larguraExclamacao = MeasureText("!", tamFonte);
+                    DrawText("!", (int)meioEvento.x - (larguraExclamacao / 2), (int)meioEvento.y - (tamFonte / 2), tamFonte, WHITE);
+
+                    // --- TEXTO DANGER ZONE REPETIDO NA FITA ---
+                    float dxEvento = pontoFimEvento.x - pontoInicioEvento.x;
+                    float dyEvento = pontoFimEvento.y - pontoInicioEvento.y;
+                    float distanciaEvento = sqrt(dxEvento*dxEvento + dyEvento*dyEvento);
+                    float angulo = atan2f(dyEvento, dxEvento) * RAD2DEG;
+                    
+                    int fontSizeDanger = 15;
+                    std::string textoBase = "DANGER ZONE == ";
+                    float larguraBase = (float)MeasureText(textoBase.c_str(), fontSizeDanger);
+                    
+                    int repeticoes = (int)(distanciaEvento / larguraBase);
+                    if (repeticoes < 1) repeticoes = 1;
+
+                    std::string textoFinal = "";
+                    for (int i = 0; i < repeticoes; i++) {
+                        textoFinal += textoBase;
+                    }
+                    if (textoFinal.length() > 4) {
+                        textoFinal = textoFinal.substr(0, textoFinal.length() - 4);
+                    }
+
+                    float offsetOrigemY = 25.0f; 
+                    if (dxEvento < 0) {
+                        angulo += 180.0f;
+                        offsetOrigemY = -15.0f; 
+                    }
+
+                    float textWidth = (float)MeasureText(textoFinal.c_str(), fontSizeDanger);
+                    Vector2 origemTexto = { textWidth / 2.0f, offsetOrigemY };
+                    
+                    DrawTextPro(GetFontDefault(), textoFinal.c_str(), meioEvento, origemTexto, angulo, (float)fontSizeDanger, 2.0f, RED);
+                    
+                } else {
+                    // Viagem 100% segura com Glow
+                    BeginBlendMode(BLEND_ADDITIVE);
+                    DrawLineEx(posOrigem, posDestino, 20.0f, ColorAlpha(GREEN, 0.4f));
+                    EndBlendMode();
+                    DrawLineEx(posOrigem, posDestino, 6.0f, GREEN);
+                }
+                
+                // Radar pulsante no destino
+                float pulsoRota = sin(GetTime() * 8.0f) * 8.0f;
+                DrawCircleLines(posDestino.x, posDestino.y, galaxia[destinoTracado].tam_nucleo + 20.0f + pulsoRota, GREEN);
+            }
+
+            // =============================================================
+            // 4. INDICADOR DO JOGADOR
+            // =============================================================
+            if (estrelaAtualPlayer >= 0 && estrelaAtualPlayer < galaxia.size()) {
+                Vector2 posPlayer = galaxia[estrelaAtualPlayer].pos;
+                
+                // Atualiza o cronômetro do ping
+                if (timerPingPlayer > 0.0f) timerPingPlayer -= GetFrameTime();
+
+                // Matemática do Ping: Multiplicador de tamanho
+                float multiplicador = 1.0f;
+                if (timerPingPlayer > 0.0f) {
+                    // Fica 5x maior e pulsa rápido para chamar muita atenção no zoom out
+                    multiplicador = 5.0f + sin(GetTime() * 15.0f) * 1.0f; 
+                }
+
+                // Animação de flutuação base
+                float flutuacao = sin(GetTime() * 4.0f) * 5.0f;
+                
+                // Medidas dinâmicas
+                float largura = 12.0f * multiplicador;
+                float altura = 20.0f * multiplicador;
+                
+                // O Y base é afastado proporcionalmente ao tamanho para a ponta sempre tocar a estrela
+                float baseY = posPlayer.y - (5.0f * multiplicador) + flutuacao;
+
+                // Vértices do triângulo invertido
+                Vector2 p1 = { posPlayer.x - largura, baseY - altura }; // Topo Esquerdo
+                Vector2 p2 = { posPlayer.x + largura, baseY - altura }; // Topo Direito
+                Vector2 p3 = { posPlayer.x, baseY };                    // Ponta (Baixo)
+                
+                DrawTriangle(p1, p3, p2, YELLOW); 
+                DrawTriangleLines(p1, p3, p2, ORANGE);
+                
+                // Texto crescendo proporcionalmente e centralizado
+                int tamanhoFonte = (int)(10 * multiplicador);
+                int larguraTexto = MeasureText("PLAYER", tamanhoFonte);
+                DrawText("PLAYER", (int)posPlayer.x - (larguraTexto / 2), (int)(baseY - altura - tamanhoFonte - 5), tamanhoFonte, YELLOW);
             }
 
         EndMode2D();
 
-        // --- UI ---
-        // (O código da UI continua idêntico ao anterior)
         // --- UI (INTERFACE) ---
         DrawText("MAPA DE NAVEGAÇÃO", 20, 20, 20, WHITE);
-        DrawText("WASD: Mover | SCROLL: Zoom", 20, 45, 10, LIGHTGRAY);
+        DrawText("WASD: Mover | SCROLL: Zoom", 20, 45, 10, WHITE);
+        DrawText("C: ELEVAR PDL", 20, 60, 10, WHITE);
+        DrawText("Z: SUPRIMIR PDL", 20, 75, 10, WHITE);
+        DrawText("P: MOSTRAR PLAYER", 20, 90, 10, WHITE);
 
         // --- BOTÃO TOGGLE VISUAL ---
         // 1. Definir área do botão (Canto Superior Direito)
-        Rectangle btnVisual = { (float)screenWidth - 140, 20, 120, 30 };
+        btnVisual = { (float)screenWidth - 140, 20, 120, 30 };
         
         // 2. Lógica de Clique (Mouse dentro do retangulo + Clique Esquerdo)
         // Usamos GetMousePosition() direto, pois estamos na UI (sem zoom da camera)
@@ -1061,77 +1467,190 @@ int main(void)
         const char* textoBtn = mostrarVisual ? "VISUAL: ON" : "VISUAL: OFF";
         DrawText(textoBtn, (int)btnVisual.x + 10, (int)btnVisual.y + 8, 10, WHITE);
 
-        if (estrelaFocada != nullptr) {
-            // Converter posição do mundo para a tela (para a caixa ficar fixa perto da estrela)
-            Vector2 screenPos = GetWorldToScreen2D(estrelaFocada->pos, camera);
-            
-            int boxW = 260;
-            int boxH = 120; // Mais altura para caber tudo
-            int boxX = screenPos.x + 30; // Um pouco para a direita da estrela
-            int boxY = screenPos.y - 60;
+        // =============================================================
+        // 4. INTERFACE DE INFORMAÇÕES (HOVER E SELEÇÃO MULTIPLA)
+        // =============================================================
+        // Cria uma lista de UIs que precisam aparecer neste frame
+        std::vector<int> estrelasParaMostrar;
+        
+        // 1º Colocamos a Selecionada (Ela é desenhada primeiro, ficando "no fundo" se cruzar)
+        if (indexEstrelaSelecionada != -1) {
+            estrelasParaMostrar.push_back(indexEstrelaSelecionada);
+        }
+        
+        // 2º Colocamos a do Hover, CASO seja uma estrela diferente da selecionada
+        if (indexEstrelaFocada != -1 && indexEstrelaFocada != indexEstrelaSelecionada) {
+            estrelasParaMostrar.push_back(indexEstrelaFocada);
+        }
 
-            // Tratamento para não sair da tela
-            if (boxX + boxW > screenWidth) boxX = screenPos.x - boxW - 30; // Joga pra esquerda
+        // Loop que desenha as caixinhas
+        for (int i = 0; i < (int)estrelasParaMostrar.size(); i++) {
+            int indexUI = estrelasParaMostrar[i];
+            bool ehSelecionada = (indexUI == indexEstrelaSelecionada);
+
+            Estrela* estrelaUI = &galaxia[indexUI];
+            Vector2 screenPos = GetWorldToScreen2D(estrelaUI->pos, camera);
+            
+            // --- CÁLCULO DA DISTÂNCIA ---
+            float dx = estrelaUI->pos.x - galaxia[estrelaAtualPlayer].pos.x;
+            float dy = estrelaUI->pos.y - galaxia[estrelaAtualPlayer].pos.y;
+            float distMundo = sqrt(dx*dx + dy*dy);
+            
+            int distanciaAnosLuz = (int)(distMundo / 10.0f);
+
+            int boxW = 260; int boxH = 140; 
+            int boxX = screenPos.x + 30; int boxY = screenPos.y - 60;
+
+            if (boxX + boxW > screenWidth) boxX = screenPos.x - boxW - 30; 
             if (boxY + boxH > screenHeight) boxY = screenPos.y - boxH;
             if (boxY < 0) boxY = 10;
 
-            // Fundo e Borda
-            Color borda = estrelaFocada->tem_chefe ? estrelaFocada->cor_aura : GREEN;
-            DrawRectangle(boxX, boxY, boxW, boxH, Fade(BLACK, 0.9f));
+            Color borda = estrelaUI->tem_chefe ? estrelaUI->cor_aura : GREEN;
+            DrawRectangle(boxX, boxY, boxW, boxH, BLACK);
+            DrawRectangle(boxX, boxY, boxW, boxH, Fade(WHITE, 0.1f));
+            DrawRectangle(boxX, boxY, boxW, boxH, Fade(GREEN, 0.1f));
             DrawRectangleLines(boxX, boxY, boxW, boxH, borda);
 
-            // Conteúdo
-            if (estrelaFocada->tem_chefe) {
+            // Conteúdo da Estrela
+            if (estrelaUI->tem_chefe) {
                 DrawText("SINAL DETECTADO", boxX + 10, boxY + 10, 10, RED);
-                DrawText(estrelaFocada->nome_chefe.c_str(), boxX + 10, boxY + 25, 20, WHITE);
+                DrawText(estrelaUI->nome_chefe.c_str(), boxX + 10, boxY + 25, 20, WHITE);
                 
-                // MOSTRA O PODER EM TEMPO REAL
-                // Ex: "5.000 (Suprimido)" ou "1.000.000 (MÁXIMO!)"
                 const char* estadoTexto = "";
                 Color corTexto = YELLOW;
                 
-                if (estrelaFocada->estado_ki == ESCONDIDO || estrelaFocada->estado_ki == SUPRIMINDO) {
-                    estadoTexto = "(Suprimido)";
-                    corTexto = GRAY;
-                } else if (estrelaFocada->estado_ki == MAXIMO) {
-                    estadoTexto = "(MÁXIMO!)";
-                    corTexto = ORANGE;
+                if (estrelaUI->estado_ki == ESCONDIDO || estrelaUI->estado_ki == SUPRIMINDO) {
+                    estadoTexto = "(Suprimido)"; corTexto = GRAY;
+                } else if (estrelaUI->estado_ki == MAXIMO) {
+                    estadoTexto = "(MÁXIMO!)"; corTexto = ORANGE;
                 } else {
                     estadoTexto = "(Elevando...)";
                 }
 
-                DrawText(TextFormat("Ki: %i %s", estrelaFocada->nivel_atual, estadoTexto), boxX + 10, boxY + 50, 10, corTexto);
+                DrawText(TextFormat("Ki: %i %s", estrelaUI->nivel_atual, estadoTexto), boxX + 10, boxY + 50, 10, WHITE);
                 
-                // BARRA DE VIDA DINÂMICA
-                DrawRectangle(boxX + 10, boxY + 70, 240, 6, Fade(GRAY, 0.5f)); // Fundo cinza escuro
-                
-                // A barra preenche baseada no ki ATUAL em relação a uma constante global de força (ex: 1 milhão)
-                // OU em relação ao próprio máximo dele? 
-                // R: Em DBZ scouters, a barra sobe conforme o número sobe.
-                float ratio = (float)estrelaFocada->nivel_atual / 800000.0f; // 800k enche a barra
+                DrawRectangle(boxX + 10, boxY + 70, 240, 6, Fade(GRAY, 0.5f)); 
+                float ratio = (float)estrelaUI->nivel_atual / 800000.0f; 
                 if (ratio > 1.0f) ratio = 1.0f;
+                DrawRectangle(boxX + 10, boxY + 70, (int)(240 * ratio), 6, estrelaUI->cor_aura);
                 
-                DrawRectangle(boxX + 10, boxY + 70, (int)(240 * ratio), 6, estrelaFocada->cor_aura);
-                
-                // Marcador de "Máximo Potencial" (Uma linha fina mostrando onde o Ki dele PODE chegar)
-                // Isso dá a dica pro jogador: "A barra tá baixa, mas olha aquela marquinha lá na frente..."
-                float ratioMax = (float)estrelaFocada->nivel_maximo / 800000.0f;
+                float ratioMax = (float)estrelaUI->nivel_maximo / 800000.0f;
                 if (ratioMax > 1.0f) ratioMax = 1.0f;
-                if (estrelaFocada->estado_ki != MAXIMO) {
+                if (estrelaUI->estado_ki != MAXIMO) {
                      DrawRectangle((boxX + 10) + (int)(240 * ratioMax), boxY + 65, 2, 16, RED);
                 }
 
-                if (estrelaFocada->eh_lendario) DrawText("CLASSE: LENDÁRIO", boxX + 10, boxY + 85, 10, PURPLE);
-                else DrawText("CLASSE: ELITE", boxX + 10, boxY + 85, 10, ORANGE);
+                if (estrelaUI->eh_lendario) DrawText("CLASSE: LENDÁRIO", boxX + 140, boxY+10, 10, PURPLE);
+                else DrawText("CLASSE: ELITE", boxX + 150, boxY+10, 10, ORANGE);
             }
             else {
-                // Estrela Comum
                 DrawText("SISTEMA SEGURO", boxX + 10, boxY + 10, 10, GREEN);
                 DrawText("Setor Desabitado", boxX + 10, boxY + 30, 20, LIGHTGRAY);
                 DrawText("Sem sinais de Ki hostil.", boxX + 10, boxY + 60, 10, GRAY);
-                DrawText("[CLIQUE PARA VIAJAR]", boxX + 10, boxY + 90, 10, GREEN);
+            }
+
+            // --- LÓGICA DO BOTÃO VS TEXTO DE HOVER ---
+            if (ehSelecionada) {
+                if (indexUI != estrelaAtualPlayer) {
+                    // Descobre se esta estrela é a rota atualmente traçada
+                    bool rotaAtiva = (destinoTracado == indexUI);
+                    
+                    // FÍSICA DO BOTÃO: Se ativo, altura diminui de 20 para 16, e desce 2 pixels
+                    float alturaBtn = rotaAtiva ? 11.0f : 20.0f;
+                    float yOffset = rotaAtiva ? 9.0f : 0.0f; 
+
+                    Rectangle btnRota = { (float)boxX + 140, (float)boxY + 85 + yOffset, (float)boxW - 150, alturaBtn+30 };
+                    Vector2 mouseScreen = GetMousePosition();
+                    bool hoverRota = CheckCollisionPointRec(mouseScreen, btnRota);
+
+                    // LÓGICA DE INTERRUPTOR E SORTEIO DE EVENTOS
+                    if (hoverRota && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+                        if (rotaAtiva) {
+                            destinoTracado = -1; // Desliga a rota
+                        } else {
+                            destinoTracado = indexUI; // Liga a rota
+                            
+                            // --- CALCULA A CHANCE DO EVENTO ---
+                            // Chance base de 15% + até 65% extra dependendo do tamanho da viagem
+                            // distMundo máximo é uns 6000.
+                            int chanceCinturao = 15 + (int)((distMundo / 6000.0f) * 65.0f); 
+                            
+                            if (GetRandomValue(1, 100) <= chanceCinturao) {
+                                rotaTemCinturao = true;
+                                // Sorteia onde começa: entre 10% e 60% do trajeto
+                                pctInicioCinturao = (float)GetRandomValue(10, 60) / 100.0f; 
+                                
+                                // Duração da chuva: entre 15% e 35% do trajeto
+                                float duracao = (float)GetRandomValue(15, 35) / 100.0f; 
+                                pctFimCinturao = pctInicioCinturao + duracao;
+                                
+                                // Trava de segurança para não passar do destino (max 95%)
+                                if (pctFimCinturao > 0.95f) pctFimCinturao = 0.95f; 
+                            } else {
+                                rotaTemCinturao = false;
+                            }
+                        }
+                    }
+
+                    // Atualiza a visualização da cor imediatamente após o clique
+                    rotaAtiva = (destinoTracado == indexUI);
+
+                    Color corBotao;
+                    if (rotaAtiva) corBotao = YELLOW; // Botão afundado e ativo
+                    else if (hoverRota) corBotao = GREEN;
+                    else corBotao = DARKGREEN;
+
+                    DrawRectangleRec(btnRota, corBotao);
+                    DrawRectangleLinesEx(btnRota, 3, BLACK); 
+                    
+                    // Centraliza o texto verticalmente independente da altura do botão
+                    int textW = MeasureText("TRACAR\n ROTA", 15);
+                    if(rotaAtiva){
+                        DrawText("TRACAR\n  ROTA", (int)(btnRota.x + (btnRota.width / 2) - (textW / 2)), (int)(btnRota.y + (alturaBtn/2)), 15, BLACK);
+                    }
+                    else{ 
+                        DrawText("TRACAR\n  ROTA", (int)(btnRota.x + (btnRota.width / 2) - (textW / 2)), (int)(btnRota.y + (alturaBtn/2) - 5), 15, BLACK);
+                    }
+                    DrawText(TextFormat("Distância:\n %d AL", distanciaAnosLuz), boxX + 10, boxY + 85, 20, SKYBLUE);
+                } 
+                else {
+                    DrawText("LOCAL ATUAL (Nave Estacionada)", boxX + 10, boxY + 120, 10, YELLOW);
+                }
+            } else {
+                // APENAS HOVER (A caixinha do mouse passando por cima)
+                if (indexUI == estrelaAtualPlayer) {
+                    DrawText("LOCAL ATUAL (Sua Nave)", boxX + 10, boxY + 120, 10, YELLOW);
+                } else {
+                    DrawText("[CLIQUE PARA SELECIONAR E TRACAR ROTA]", boxX + 10, boxY + 120, 10, LIGHTGRAY);
+                    DrawText(TextFormat("Distância: %d AL", distanciaAnosLuz), boxX + 10, boxY + 85, 20, SKYBLUE);
+                }
             }
         }
+
+        //Barra de Ki do Jogador (Topo Centralizado)
+        int barW = 400; int barH = 20;
+        int barX = (screenWidth / 2) - (barW / 2);
+        int barY = 20;
+
+        // Fundo da barra
+        DrawRectangle(barX, barY, barW, barH, Fade(BLACK, 0.8f));
+        DrawRectangleLines(barX, barY, barW, barH, GRAY);
+
+        // Calcula o preenchimento baseado no dímer (playerEscalaAtual)
+        // Usamos a escala diretamente para o visual da barra ser suave
+        float pctPreenchimento = (playerEscalaAtual - playerEscalaMinima) / (1.0f - playerEscalaMinima);
+        if (pctPreenchimento < 0) pctPreenchimento = 0;
+
+        // Cor da barra baseada na aura do jogador, mas com opacidade total
+        Color corPreenchimento = { jogador->corAura.r, jogador->corAura.g, jogador->corAura.b, 255 };
+        
+        // Desenha o preenchimento
+        DrawRectangle(barX + 2, barY + 2, (int)((barW - 4) * pctPreenchimento), barH - 4, corPreenchimento);
+
+        // Texto com o valor exato (centralizado na barra)
+        std::string textoPoder = TextFormat("PODER ATUAL: %d / %d", jogador->pdlAtual, jogador->pdlMaximo);
+        int textoW = MeasureText(textoPoder.c_str(), 10);
+        DrawText(textoPoder.c_str(), barX + (barW/2) - (textoW/2), barY + 5, 10, WHITE);
 
         EndDrawing();
     }

@@ -25,9 +25,14 @@ public:
     int forca;
     int defesa;
     int velocidade;
+
+    // --- STATUS DE KI (RPG) ---
+    int pdlMaximo;
+    int pdlBase;
+    int pdlAtual;
     
     // Cosmético
-    Color corDoKi;
+    Color corAura;
 
     // Progressão
     int level;
