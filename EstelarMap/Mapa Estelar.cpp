@@ -1784,26 +1784,37 @@ int main(void)
                 if (indexUI != estrelaAtualPlayer) {
                     bool dentroDoAlcance = (distanciaAnosLuz <= 10);
                     
+                    // Custo mínimo de 1 para evitar saltos grátis (0 >= 0)
+                    int custoFuel = distanciaAnosLuz < 1 ? 1 : distanciaAnosLuz;
+                    
+                    // Usando a variável exata
+                    bool temFuel = (jogador->minhaNave->combustivelAtual >= custoFuel); 
+                    
                     if (dentroDoAlcance && !animandoViagem) {
-                        // --- BOTÃO GO (VIAGEM DIRETA) ---
                         Rectangle btnGo = { (float)boxX + 140, (float)boxY + 85, (float)boxW - 150, 40 };
                         Vector2 mouseScreen = GetMousePosition();
                         bool hoverGo = CheckCollisionPointRec(mouseScreen, btnGo);
 
-                        if (hoverGo && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+                        if (hoverGo && temFuel && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+                            jogador->minhaNave->combustivelAtual -= custoFuel; // Gasta o combustível
                             estrelaDestinoCurto = indexUI;
                             animandoViagem = true;
-                            destinoTracado = -1; // Cancela rota longa se houver
+                            destinoTracado = -1; 
                         }
 
-                        DrawRectangleRec(btnGo, hoverGo ? GREEN : DARKGREEN);
+                        Color corBtnGo = temFuel ? (hoverGo ? GREEN : DARKGREEN) : MAROON;
+                        DrawRectangleRec(btnGo, corBtnGo);
                         DrawRectangleLinesEx(btnGo, 3, BLACK); 
                         
-                        int textW = MeasureText("GO!", 20);
-                        DrawText("GO!", (int)(btnGo.x + (btnGo.width / 2) - (textW / 2)), (int)(btnGo.y + 10), 20, BLACK);
+                        if (temFuel) {
+                            int textW = MeasureText("GO!", 20);
+                            DrawText("GO!", (int)(btnGo.x + (btnGo.width / 2) - (textW / 2)), (int)(btnGo.y + 10), 20, BLACK);
+                        } else {
+                            int textW = MeasureText("SEM GASOL", 15);
+                            DrawText("SEM GASOL", (int)(btnGo.x + (btnGo.width / 2) - (textW / 2)), (int)(btnGo.y + 12), 15, LIGHTGRAY);
+                        }
                         
                     } else if (!dentroDoAlcance) {
-                        // --- BOTÃO TRACAR ROTA (LONGA DISTÂNCIA) ---
                         bool rotaAtiva = (destinoTracado == indexUI);
                         float alturaBtn = rotaAtiva ? 11.0f : 20.0f;
                         float yOffset = rotaAtiva ? 9.0f : 0.0f; 
@@ -1814,10 +1825,10 @@ int main(void)
 
                         if (hoverRota && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
                             if (rotaAtiva) {
-                                destinoTracado = -1; // Desliga a rota
+                                destinoTracado = -1; 
                             } else {
                                 destinoTracado = indexUI; 
-                                trechosPerigo.clear(); // Limpa a rota anterior
+                                trechosPerigo.clear(); 
                                 
                                 Vector2 A = posNaveAtual;
                                 Vector2 B = galaxia[destinoTracado].pos;
@@ -1828,7 +1839,6 @@ int main(void)
                                 if (distRota > 0) {
                                     Vector2 dir = { dx_r / distRota, dy_r / distRota }; 
                                     
-                                    // 1. Coleta TODOS os trechos que batem em zonas
                                     for (const auto& z : zonasMeteoros) {
                                         Vector2 AC = { z.pos.x - A.x, z.pos.y - A.y };
                                         float t = (AC.x * dir.x) + (AC.y * dir.y); 
@@ -1850,9 +1860,7 @@ int main(void)
                                         }
                                     }
 
-                                    // 2. FUSÃO (Merge) das zonas que estão sobrepostas
                                     if (!trechosPerigo.empty()) {
-                                        // Ordena pelo ponto inicial
                                         std::sort(trechosPerigo.begin(), trechosPerigo.end(), [](const Vector2& a, const Vector2& b) {
                                             return a.x < b.x;
                                         });
@@ -1864,9 +1872,9 @@ int main(void)
                                             Vector2& ultimo = mesclados.back();
                                             Vector2 atual = trechosPerigo[i];
                                             
-                                            if (atual.x <= ultimo.y) { // Se sobrepõe, estica o limite final
+                                            if (atual.x <= ultimo.y) {
                                                 ultimo.y = fmaxf(ultimo.y, atual.y);
-                                            } else { // Se tem espaço seguro entre eles, cria nova fita
+                                            } else { 
                                                 mesclados.push_back(atual);
                                             }
                                         }
@@ -1892,7 +1900,10 @@ int main(void)
                             DrawText("TRACAR\n  ROTA", (int)(btnRota.x + (btnRota.width / 2) - (textW / 2)), (int)(btnRota.y + (alturaBtn/2) - 5), 15, BLACK);
                         }
                     }
-                    DrawText(TextFormat("Distância:\n %d AL", distanciaAnosLuz), boxX + 10, boxY + 85, 20, SKYBLUE);
+                    
+                    DrawText(TextFormat("Distancia:\n %d AL", distanciaAnosLuz), boxX + 10, boxY + 80, 15, SKYBLUE);
+                    DrawText(TextFormat("Custo de Gasol: %dL", custoFuel), boxX + 10, boxY + 110, 10, temFuel ? ORANGE : RED);
+                    
                 } else {
                     // --- DADOS DA ESTRELA ATUAL (UNIFICADO NA CAIXA ORIGINAL) ---
                     int linhaY = boxY + 90; // Começa a desenhar logo abaixo da barra de Ki
@@ -1953,6 +1964,8 @@ int main(void)
         std::string textoPoder = TextFormat("PODER ATUAL: %d / %d", jogador->pdlAtual, jogador->pdlMaximo);
         int textoW = MeasureText(textoPoder.c_str(), 10);
         DrawText(textoPoder.c_str(), barX + (barW/2) - (textoW/2), barY + 5, 10, WHITE);
+
+        DrawText(TextFormat("COMBUSTÍVEL: %d", (int)jogador->minhaNave->combustivelAtual), 20, 120, 10, ORANGE);
 
         EndDrawing();
     }
