@@ -49,6 +49,8 @@ struct Estrela {
     int limite_anim;
     int tam_base;
     int alcance_cresc;
+    int taxafuel;
+    bool postoVisitado = false;
 
     // --- Dados do Sistema Estelar (Procedural) ---
     bool sistema_gerado = false;
@@ -227,7 +229,7 @@ void GerarSistemaEstelar(Estrela& e) {
 
         e.planetas.push_back(p);
     }
-
+    e.taxafuel = GetRandomValue(2, 100);
     e.sistema_gerado = true;
 }
 
@@ -396,7 +398,8 @@ void RotacionarPonto(Vector2& p, float anguloGraus) {
 }
 
 // Variável de controle do visual
-    bool mostrarVisual = true; // Começa ligado
+    bool mostrarVisual = true; 
+    bool mostrarPosto = true;
 
 // Controle da Rotação Galáctica
     float anguloGalaxia = 0.0f;
@@ -687,14 +690,32 @@ int main(void)
     if (!estrelasSeguras.empty()) {
         estrelaAtualPlayer = estrelasSeguras[GetRandomValue(0, estrelasSeguras.size() - 1)];
         
-        // AGORA SIM! Salva a casa exata depois que o sorteio foi feito
+        //Salva a casa exata depois que o sorteio foi feito
         estrelaCasaPlayer = estrelaAtualPlayer; 
         
-        // Bônus: Já centraliza a câmera onde o player nasceu!
+        //centraliza a câmera onde o player nasceu
         camera.target = galaxia[estrelaAtualPlayer].pos;
     }
 
     GerarSistemaEstelar(galaxia[estrelaAtualPlayer]);
+
+   //-- FORÇAR VIDA E TAG NO PLANETA NATAL ---
+    if (estrelaCasaPlayer >= 0 && !galaxia[estrelaCasaPlayer].planetas.empty()) {
+        bool temVida = false;
+        for (auto& p : galaxia[estrelaCasaPlayer].planetas) {
+            if (p.tipo_vida > 1) { 
+                temVida = true; 
+                p.nome += " (HOME)"; 
+                break; 
+            }
+        }
+        // Se a aleatoriedade gerou um sistema morto, força o 1º planeta a ser habitável
+        if (!temVida) {
+            galaxia[estrelaCasaPlayer].planetas[0].tipo_vida = 4; // 4 = Civilização Avançada
+            galaxia[estrelaCasaPlayer].planetas[0].desc_vida = "Civilizacao Avancada";
+            galaxia[estrelaCasaPlayer].planetas[0].nome += " (HOME)";
+        }
+    }
     
     // Variáveis de controle
     Estrela* estrelaFocada = nullptr; // Ponteiro para saber qual estrela o mouse está em cima
@@ -899,24 +920,34 @@ int main(void)
         }
 
         // --- SISTEMA DE CLIQUE E SELEÇÃO ---
-            // Primeiro verificamos se o mouse está em cima da UI para não deselecionar a estrela ao clicar no botão
-            bool mouseNaUI = false;
-            if (indexEstrelaSelecionada != -1) {
-                Vector2 screenPos = GetWorldToScreen2D(galaxia[indexEstrelaSelecionada].pos, camera);
-                int boxW = 260; int boxH = 140;
-                if (indexEstrelaSelecionada == estrelaAtualPlayer) {
-                    boxH = 170 + (galaxia[indexEstrelaSelecionada].planetas.size() * 15);
-                } else {
-                    boxH = 140; 
-                }
-                int boxX = screenPos.x + 30; int boxY = screenPos.y - 60;
-                if (boxX + boxW > screenWidth) boxX = screenPos.x - boxW - 30;
-                if (boxY + boxH > screenHeight) boxY = screenPos.y - boxH;
-                if (boxY < 0) boxY = 10;
-                Rectangle boxRect = { (float)boxX, (float)boxY, (float)boxW, (float)boxH };
-                
-                if (CheckCollisionPointRec(mouseScreen, boxRect)) mouseNaUI = true;
+        // Primeiro verificamos se o mouse está em cima da UI para não deselecionar a estrela
+        bool mouseNaUI = false;
+        if (indexEstrelaSelecionada != -1) {
+            Vector2 screenPos = GetWorldToScreen2D(galaxia[indexEstrelaSelecionada].pos, camera);
+            int boxW = 280; 
+            int boxH = 140; 
+            
+            // VERIFICA SE TEM POSTO PARA AUMENTAR A ÁREA DE CLIQUE
+            bool temPostoColisao = false;
+            for (const auto& p : galaxia[indexEstrelaSelecionada].planetas) {
+                if (p.tipo_vida == 4) temPostoColisao = true;
             }
+
+            if (indexEstrelaSelecionada == estrelaAtualPlayer) {
+                boxH = 170 + (galaxia[indexEstrelaSelecionada].planetas.size() * 15);
+                if (temPostoColisao) boxH += 45; 
+            } else {
+                boxH = 140; 
+            }
+
+            int boxX = screenPos.x + 30; int boxY = screenPos.y - 60;
+            if (boxX + boxW > screenWidth) boxX = screenPos.x - boxW - 30; 
+            if (boxY + boxH > screenHeight) boxY = screenPos.y - boxH;
+            if (boxY < 0) boxY = 10;
+            
+            Rectangle boxRect = { (float)boxX, (float)boxY, (float)boxW, (float)boxH };
+            if (CheckCollisionPointRec(mouseScreen, boxRect)) mouseNaUI = true;
+        }
             
             // Impede que clicar no botão "VISUAL: ON/OFF" feche a janela da estrela
             Rectangle btnVisual = { (float)screenWidth - 140, 20, 120, 30 };
@@ -945,6 +976,9 @@ int main(void)
         static int timer_fluxo_ki = 0;
         if (timer_fluxo_ki > 0) timer_fluxo_ki--;
 
+        if (estrelaAtualPlayer >= 0 && !animandoViagem) {
+            jogador->minhaNave->AtualizarCondensador(GetFrameTime());
+        }
 
         // --- INPUT E LÓGICA DO KI DO JOGADOR 
         if (estrelaAtualPlayer >= 0) {
@@ -1554,10 +1588,23 @@ int main(void)
                 DrawCircleLines(posNaveAtual.x, posNaveAtual.y, 102.0f, ColorAlpha(SKYBLUE, 0.1f));
             }
 
+            // --- DESENHAR MARCADORES DE POSTOS VISITADOS ---
+            if (mostrarPosto) {
+                for (const auto& e : galaxia) {
+                    if (e.postoVisitado) {
+                        // Desenha um "F" pequeno acima da estrela
+                        DrawText("F", (int)e.pos.x + 10, (int)e.pos.y - 25, 15, ORANGE);
+                        // Um círculo sutil laranja ao redor para destacar no mapa
+                        DrawCircleLines(e.pos.x, e.pos.y, e.tam_nucleo + 15.0f, Fade(ORANGE, 0.4f));
+                    }
+                }
+            }
+
             // =============================================================
             // 4. INDICADOR DO JOGADOR
             // =============================================================
-            if (estrelaAtualPlayer >= 0 && estrelaAtualPlayer < galaxia.size()) {
+            bool mostrarPlayer = (estrelaAtualPlayer != estrelaCasaPlayer) || animandoViagem;
+            if (estrelaAtualPlayer >= 0 && estrelaAtualPlayer < galaxia.size() && mostrarPlayer) {
                 Vector2 posPlayer = posNaveAtual;
 
                 // Matemática do Ping: Multiplicador de tamanho
@@ -1683,6 +1730,21 @@ int main(void)
         const char* textoBtnZonas = mostrarZonas ? "ZONAS: ON" : "ZONAS: OFF";
         DrawText(textoBtnZonas, (int)btnZonas.x + 10, (int)btnZonas.y + 8, 10, WHITE);
 
+        // BOTAO POSTOS IPIRANGA
+        // --- BOTÃO ZONAS DE RISCO ---
+        Rectangle btnPosto = { (float)screenWidth - 140, 100, 120, 30 }; // Fica 40px abaixo do outro
+        if (CheckCollisionPointRec(GetMousePosition(), btnPosto)) {
+            if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+                mostrarPosto = !mostrarPosto;
+            }
+        }
+        
+        Color corBtnPosto = mostrarPosto ? DARKGREEN : DARKGRAY;
+        DrawRectangleRec(btnPosto, corBtnPosto);
+        DrawRectangleLinesEx(btnPosto, 2, WHITE);
+        const char* textoBtnPosto = mostrarPosto ? "POSTOS: ON" : "POSTOS: OFF";
+        DrawText(textoBtnPosto, (int)btnPosto.x + 10, (int)btnPosto.y + 8, 10, WHITE);
+
         // =============================================================
         // 4. INTERFACE DE INFORMAÇÕES (HOVER E SELEÇÃO MULTIPLA)
         // =============================================================
@@ -1716,13 +1778,18 @@ int main(void)
 
             int boxW = 260; 
             int boxH = 140; 
-            
+
+            // Verifica se tem civilização avançada no sistema
+            bool temPosto = false;
+            for (const auto& p : estrelaUI->planetas) {
+                if (p.tipo_vida == 4) temPosto = true;
+            }
+
             // --- CÁLCULO DINÂMICO DA ALTURA DA CAIXA ---
             if (ehSelecionada && indexUI == estrelaAtualPlayer) {
-                // Aumenta a caixa original para caber a lista de planetas e dados científicos
                 boxH = 170 + (estrelaUI->planetas.size() * 15);
+                if (temPosto) boxH += 45; // Mais espaço para o botão do posto
             } else if (ehSelecionada && indexUI != estrelaAtualPlayer) {
-                // Altura padrão para as outras estrelas com botões
                 boxH = 140; 
             }
 
@@ -1797,6 +1864,7 @@ int main(void)
 
                         if (hoverGo && temFuel && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
                             jogador->minhaNave->combustivelAtual -= custoFuel; // Gasta o combustível
+                            jogador->minhaNave->ResetarTravaAFK();
                             estrelaDestinoCurto = indexUI;
                             animandoViagem = true;
                             destinoTracado = -1; 
@@ -1905,7 +1973,7 @@ int main(void)
                     DrawText(TextFormat("Custo de Gasol: %dL", custoFuel), boxX + 10, boxY + 110, 10, temFuel ? ORANGE : RED);
                     
                 } else {
-                    // --- DADOS DA ESTRELA ATUAL (UNIFICADO NA CAIXA ORIGINAL) ---
+                    // --- DADOS DA ESTRELA ATUAL
                     int linhaY = boxY + 90; // Começa a desenhar logo abaixo da barra de Ki
 
                     DrawText("LOCAL ATUAL (Nave Ancorada)", boxX + 10, linhaY, 10, YELLOW);
@@ -1927,6 +1995,33 @@ int main(void)
                         // Desenha o Nome + (Tipo de Vida)
                         DrawText(TextFormat("- %s (%s)", estrelaUI->planetas[p].nome.c_str(), estrelaUI->planetas[p].desc_vida.c_str()), boxX + 20, linhaY, 10, corPlaneta);
                         linhaY += 15;
+                    }
+                    // --- BOTÃO DO POSTO DE COMBUSTÍVEL ---
+                    if (temPosto) {
+                        linhaY += 10;
+                        float precoL = 1.0f + (estrelaUI->taxafuel / 100.0f);
+                        float preco5L = precoL * 5.0f;
+                        
+                        Rectangle btnPosto = { (float)boxX + 10, (float)linhaY, (float)boxW - 20, 30 };
+                        Vector2 mouseScreen = GetMousePosition();
+                        bool hoverPosto = CheckCollisionPointRec(mouseScreen, btnPosto);
+                        bool podeComprar = (jogador->dinheiro >= preco5L && jogador->minhaNave->combustivelAtual < jogador->minhaNave->combustivelMaximo);
+
+                        if (hoverPosto && podeComprar && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+                            jogador->dinheiro -= preco5L; // Desconta o valor calculado
+                            jogador->minhaNave->combustivelAtual += 5;
+                            estrelaUI->postoVisitado = true;
+                            if (jogador->minhaNave->combustivelAtual > jogador->minhaNave->combustivelMaximo) {
+                                jogador->minhaNave->combustivelAtual = jogador->minhaNave->combustivelMaximo;
+                            }
+                        }
+
+                        DrawRectangleRec(btnPosto, podeComprar ? (hoverPosto ? BLUE : DARKBLUE) : DARKGRAY);
+                        DrawRectangleLinesEx(btnPosto, 2, WHITE);
+                        
+                        std::string txtPosto = TextFormat("COMPRAR 5L = $%.2f", preco5L);
+                        int txtW = MeasureText(txtPosto.c_str(), 10);
+                        DrawText(txtPosto.c_str(), btnPosto.x + (btnPosto.width/2) - (txtW/2), btnPosto.y + 10, 10, WHITE);
                     }
                 }
             } else {
@@ -1966,6 +2061,8 @@ int main(void)
         DrawText(textoPoder.c_str(), barX + (barW/2) - (textoW/2), barY + 5, 10, WHITE);
 
         DrawText(TextFormat("COMBUSTÍVEL: %d", (int)jogador->minhaNave->combustivelAtual), 20, 120, 10, ORANGE);
+        DrawText(TextFormat("TIMER CONDENSATOR: %d", (int)jogador->minhaNave->timerCondensador), 20, 140, 10, ORANGE);
+        DrawText(TextFormat("DINHEIRO: $%.2f", jogador->dinheiro), 20, 160, 10, GREEN);
 
         EndDrawing();
     }
