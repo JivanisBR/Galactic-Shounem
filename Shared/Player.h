@@ -37,7 +37,7 @@ public:
     // Progressão
     int level;
     int xpAtual;
-    int dinheiro;
+    float dinheiro = 100.0f;
 
     // Estado Atual
     PlayerState estadoAtual;

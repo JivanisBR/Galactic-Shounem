@@ -21,6 +21,13 @@ public:
     float taxaConsumoBase;       // O gasto padrão de combustível por segundo
     int escudoMaximo;
     int escudoAtual;
+
+    int condensadorLevel = 1;
+    float timerCondensador = 0.0f;
+    int fuelGeradoAFK = 0; // Trava do limite de 5
+
+    void AtualizarCondensador(float deltaTime);
+    void ResetarTravaAFK();
     
     float iFrame; // Cronômetro do tempo de invencibilidad
     

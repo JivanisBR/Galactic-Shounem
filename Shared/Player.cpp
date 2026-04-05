@@ -22,7 +22,7 @@ Player::Player(std::string nome) {
 
     level = 1;
     xpAtual = 0;
-    dinheiro = 0;
+    dinheiro = 100.0f;
 
     estadoAtual = NO_MAPA_ESTELAR; // Começa na nave
     minhaNave = new Nave();

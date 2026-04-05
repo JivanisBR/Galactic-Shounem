@@ -6,15 +6,12 @@ Nave::Nave() {
 
     // Status Iniciais de Voo
     velocidadeAtual = 0.0f; 
-    velocidadeMaxima = 500000.0f;
+    velocidadeMaxima = 5000.0f;
     combustivelMaximo = 100.0f;
     combustivelAtual = combustivelMaximo;
-    escudoMaximo = 10;
-    escudoAtual = escudoMaximo;
-    iFrame = 0.0f;
     
     // Níveis iniciais (Upáveis no futuro)
-    forcaTurbo = 250.0f;          // Ganha 50 de vel por seg
+    forcaTurbo = 50.0f;          // Ganha 50 de vel por seg
     eficienciaCombustivel = 0.0f;// Começa sem bônus de economia
     taxaConsumoBase = 10.0f;     // Gasta 10 de comb por seg padrão
 
@@ -32,7 +29,7 @@ Nave::~Nave() {
 
 // O Cérebro da movimentação espacial
 void Nave::AtualizarVoo(float dt, bool usandoTurbo, bool usandoFreio) {
-
+    
     // MATEMÁTICA DA ECONOMIA: 
     // Se eficiencia for 0, gasta o valor base (10). 
     // Se for 100 (100%), o divisor vira 2.0, então gasta metade (5).
@@ -47,7 +44,7 @@ void Nave::AtualizarVoo(float dt, bool usandoTurbo, bool usandoFreio) {
     // 2. Lógica do Freio (Retropropulsores)
     if (usandoFreio && combustivelAtual > 0.0f) {
         combustivelAtual -= consumoReal * dt;
-        velocidadeAtual -= (forcaTurbo * 2.0f) * dt; //Freia com o dobro de força pq sim
+        velocidadeAtual -= forcaTurbo * dt; // Freia com a mesma força do motor
         
         if (velocidadeAtual < 0.0f) velocidadeAtual = 0.0f; 
     }
@@ -61,4 +58,34 @@ void Nave::GuardarMinerio(TipoMinerio tipo, int quantidade) {
     if (tipo == FERRO) invFerro += quantidade;
     else if (tipo == PRATA) invPrata += quantidade;
     else if (tipo == OURO) invOuro += quantidade;
+}
+
+void Nave::AtualizarCondensador(float deltaTime) {
+    // Se o tanque tá cheio OU já gerou 5 no AFK, o condensador desliga
+    if (combustivelAtual >= combustivelMaximo || fuelGeradoAFK >= 5) return;
+
+    if (timerCondensador <= 0.0f) {
+        // Gera o combustível (1 a 5)
+        int stardustTam = GetRandomValue(1, 5);
+        
+        // Garante que não vai passar do limite de 5 do AFK
+        if (fuelGeradoAFK + stardustTam > 10) {
+            stardustTam = 10 - fuelGeradoAFK;
+        }
+
+        combustivelAtual += stardustTam;
+        fuelGeradoAFK += stardustTam;
+        if (combustivelAtual > combustivelMaximo) combustivelAtual = combustivelMaximo;
+
+        // Calcula o próximo timer (30s a 180s) usando a sua fórmula exata
+        float tempoBase = (float)GetRandomValue(30, 180);
+        timerCondensador = tempoBase / (1.0f + (condensadorLevel / 10.0f)); 
+        
+    } else {
+        timerCondensador -= deltaTime; // Delta time real, não framerate
+    }
+}
+
+void Nave::ResetarTravaAFK() {
+    fuelGeradoAFK = 0; // Chama isso sempre que a nave viajar ou reabastecer
 }
