@@ -504,9 +504,16 @@ int main(void)
     Texture2D texFundoGalaxia = LoadTextureFromImage(imgVisual);
 
     // 3. LOOP DE GERAÇÃO (Lendo apenas a Lógica)
-    const int TENTATIVAS = 15000; // Aumentei tentativas para preencher bem os braços verdes
+    const int TENTATIVAS = 15000;
     int estrelasCriadas = 0;
-    const int LIMITE_ESTRELAS = 4000; // Quantidade de estrelas desejada
+    const int LIMITE_ESTRELAS = 4000;
+
+    // CONTROLE DE QUADRANTES (Para Entidades)
+    bool bossQ1 = false; // Top-Right
+    bool bossQ2 = false; // Top-Left
+    bool bossQ3 = false; // Bottom-Left
+    bool bossQ4 = false; // Bottom-Right
+    float raioSpawnCentro = 150.0f;    // Distância que você quer que eles fiquem do centro
 
     for (int i = 0; i < TENTATIVAS; i++) {
         if (estrelasCriadas >= LIMITE_ESTRELAS) break;
@@ -556,35 +563,44 @@ int main(void)
         }
         // --- REGRA 2: ENTIDADES (Branco Puro) ---
         else if (pLogica.r > 200 && pLogica.g > 200 && pLogica.b > 200) {
-            spawnar = true;
-            ConfigurarBoss(nova_estrela);
             
-            // Stats
-            nova_estrela.nivel_maximo = GetRandomValue(2500001, 3000000);
-            nova_estrela.diametro_maximo = (float)GetRandomValue(700, 1000);
-            nova_estrela.nome_chefe = "ENTIDADE " + GerarNomeProcedural();
+            // Como não tem mais centro branco na imagem, qualquer pixel branco achado é um dos 4 cantos.
+            if      (nova_estrela.pos.x > 0 && nova_estrela.pos.y < 0 && !bossQ1) { spawnar = true; bossQ1 = true; } 
+            else if (nova_estrela.pos.x < 0 && nova_estrela.pos.y < 0 && !bossQ2) { spawnar = true; bossQ2 = true; } 
+            else if (nova_estrela.pos.x < 0 && nova_estrela.pos.y > 0 && !bossQ3) { spawnar = true; bossQ3 = true; } 
+            else if (nova_estrela.pos.x > 0 && nova_estrela.pos.y > 0 && !bossQ4) { spawnar = true; bossQ4 = true; }
 
-            // --- CORREÇÃO: RAIOS LONGOS PARA TIER 6 ---
-            nova_estrela.raios.clear();
-            for(int k=0; k<12; k++) { // 12 Raios (Mais denso)
-                Raio r;
-                // ESCALA DE COMPRIMENTO: 3.0x a 6.0x maior que o normal
-                float escala_longa = (float)GetRandomValue(30, 60) / 10.0f;
+            if (spawnar) {
+                // FORÇA O SPAWN: Roda a roleta até tirar a sorte de vir um chefe
+                do {
+                    ConfigurarBoss(nova_estrela);
+                } while (!nova_estrela.tem_chefe);
                 
-                // Segmentos altos (8-12) e escala longa
-                RegenerarRaio(r, nova_estrela.diametro_maximo/2.0f, 8, 12, escala_longa);
-                nova_estrela.raios.push_back(r);
-            }
+                // Stats
+                nova_estrela.nivel_maximo = GetRandomValue(2500001, 3000000);
+                nova_estrela.diametro_maximo = (float)GetRandomValue(700, 1000);
+                nova_estrela.nome_chefe = "ENTIDADE " + GerarNomeProcedural();
+                nova_estrela.eh_lendario = true;
 
-            // --- CORREÇÃO: MUITAS PARTÍCULAS ---
-            nova_estrela.particulas_ki.clear();
-            int qtd_part = 600; // Aumentei de ~300 para 600 fixo!
-            
-            for(int k=0; k<qtd_part; k++) {
-                ParticulaAura p;
-                p.vida = 0; p.offset = {0,0}; p.velocidade = {0,0}; p.cor = WHITE; p.negativa = false;
-                p.tam = (float)GetRandomValue(30, 60) / 10.0f;
-                nova_estrela.particulas_ki.push_back(p);
+                // RECALCULA O KI BASE
+                nova_estrela.nivel_base = (int)(nova_estrela.nivel_maximo * nova_estrela.escala_minima);
+                nova_estrela.nivel_atual = nova_estrela.nivel_base;
+
+                nova_estrela.raios.clear();
+                for(int k=0; k<12; k++) { 
+                    Raio r;
+                    float escala_longa = (float)GetRandomValue(30, 60) / 10.0f;
+                    RegenerarRaio(r, nova_estrela.diametro_maximo/2.0f, 8, 12, escala_longa);
+                    nova_estrela.raios.push_back(r);
+                }
+
+                nova_estrela.particulas_ki.clear();
+                for(int k=0; k<600; k++) {
+                    ParticulaAura p;
+                    p.vida = 0; p.offset = {0,0}; p.velocidade = {0,0}; p.cor = WHITE; p.negativa = false;
+                    p.tam = (float)GetRandomValue(30, 60) / 10.0f;
+                    nova_estrela.particulas_ki.push_back(p);
+                }
             }
         }
         // --- REGRA 3: ESTRELAS COMUNS (Verde #00FF42) ---
@@ -631,6 +647,101 @@ int main(void)
                 estrelasCriadas++;
             }
         }
+    }
+
+    // --- GARANTIA DOS GUARDIÕES DE QUADRANTE ---
+    struct QuadranteFaltante { bool* flag; Vector2 pos; };
+    QuadranteFaltante checagemQ[] = {
+        { &bossQ1, {  2500.0f, -1400.0f } }, 
+        { &bossQ2, { -2500.0f, -1400.0f } }, 
+        { &bossQ3, { -2500.0f,  1400.0f } }, 
+        { &bossQ4, {  2500.0f,  1400.0f } }  
+    };
+
+    for (int q = 0; q < 4; q++) {
+        if (!*(checagemQ[q].flag)) {
+            Estrela eFaltante = {}; // Limpa memória residual
+            eFaltante.pos = checagemQ[q].pos;
+            eFaltante.escala_minima = 0.5f; 
+            
+            do {
+                ConfigurarBoss(eFaltante);
+            } while (!eFaltante.tem_chefe);
+            
+            eFaltante.nivel_maximo = GetRandomValue(2500001, 3000000);
+            eFaltante.diametro_maximo = (float)GetRandomValue(700, 1000);
+            eFaltante.nome_chefe = "ENTIDADE " + GerarNomeProcedural();
+            eFaltante.eh_lendario = true;
+            eFaltante.nivel_base = (int)(eFaltante.nivel_maximo * eFaltante.escala_minima);
+            eFaltante.nivel_atual = eFaltante.nivel_base;
+
+            for(int k=0; k<12; k++) { 
+                Raio r;
+                float escala = (float)GetRandomValue(30, 60) / 10.0f;
+                RegenerarRaio(r, eFaltante.diametro_maximo/2.0f, 8, 12, escala);
+                eFaltante.raios.push_back(r);
+            }
+
+            for(int k=0; k<600; k++) {
+                ParticulaAura p;
+                p.vida = 0; p.offset = {0,0}; p.velocidade = {0,0}; p.cor = WHITE; p.negativa = false;
+                p.tam = (float)GetRandomValue(30, 60) / 10.0f;
+                eFaltante.particulas_ki.push_back(p);
+            }
+
+            eFaltante.tam_base = GetRandomValue(5, 9);
+            eFaltante.tam_nucleo = eFaltante.tam_base;
+            eFaltante.crescendo = true;
+            eFaltante.limite_anim = GetRandomValue(5, 15);
+            eFaltante.timer_anim = 0;
+            eFaltante.alcance_cresc = 3;
+
+            galaxia.push_back(eFaltante);
+        }
+    }
+
+    // --- GUARDIÕES DO CENTRO (POSIÇÕES FIXAS E ORGANIZADAS) ---
+    float angulosCentro[4] = { 0.0f, 90.0f, 180.0f, 270.0f };
+    for (int i = 0; i < 4; i++) {
+        Estrela eFaltante = {}; 
+        
+        float radianos = angulosCentro[i] * DEG2RAD;
+        eFaltante.pos = { cosf(radianos) * raioSpawnCentro, sinf(radianos) * raioSpawnCentro };
+        eFaltante.escala_minima = 0.5f;
+
+        do {
+            ConfigurarBoss(eFaltante);
+        } while (!eFaltante.tem_chefe);
+        
+        eFaltante.nivel_maximo = GetRandomValue(2500001, 3000000);
+        eFaltante.diametro_maximo = (float)GetRandomValue(700, 1000);
+        eFaltante.nome_chefe = "ENTIDADE " + GerarNomeProcedural();
+        eFaltante.eh_lendario = true;
+        eFaltante.nivel_base = (int)(eFaltante.nivel_maximo * eFaltante.escala_minima);
+        eFaltante.nivel_atual = eFaltante.nivel_base;
+
+        for(int k=0; k<12; k++) { 
+            Raio r;
+            float escala = (float)GetRandomValue(30, 60) / 10.0f;
+            RegenerarRaio(r, eFaltante.diametro_maximo/2.0f, 8, 12, escala);
+            eFaltante.raios.push_back(r);
+        }
+
+        for(int k=0; k<600; k++) {
+            ParticulaAura p;
+            p.vida = 0; p.offset = {0,0}; p.velocidade = {0,0}; p.cor = WHITE; p.negativa = false;
+            p.tam = (float)GetRandomValue(30, 60) / 10.0f;
+            eFaltante.particulas_ki.push_back(p);
+        }
+
+        eFaltante.tam_base = GetRandomValue(5, 9);
+        eFaltante.tam_nucleo = eFaltante.tam_base;
+        eFaltante.crescendo = true;
+        eFaltante.limite_anim = GetRandomValue(5, 15);
+        eFaltante.timer_anim = 0;
+        eFaltante.alcance_cresc = 3;
+
+        galaxia.push_back(eFaltante);
     }
 
     // Limpa a memória das imagens (A textura de fundo continua na GPU)
