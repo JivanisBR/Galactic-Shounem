@@ -84,8 +84,13 @@ struct Estrela {
     Vector2 pos_visual_ki;   // A aura pode estar "no meio do caminho"
 };
 
-// Área de Risco
+// Áreas de Risco
 struct ZonaMeteoro {
+    Vector2 pos;
+    float raio;
+};
+
+struct ZonaPirata {
     Vector2 pos;
     float raio;
 };
@@ -144,14 +149,19 @@ std::string GerarNomeProcedural() {
     return nome;
 }
 
-// Função de Raios Unificada (A escala define agressividade e espessura)
+// Função de Raios (A escala define agressividade e espessura)
 void RegenerarRaio(Raio& r, float raio_base, int min_seg, int max_seg, float escala_forca) {
     r.pontos.clear();
     
     int segmentos = GetRandomValue(min_seg, max_seg);
     
     float angulo_base = (float)GetRandomValue(0, 360) * DEG2RAD;
-    float dist = raio_base * 0.4f;
+    
+    // --- PAWN ALEATÓRIO ---
+    // Sorteia uma distância entre 0% (centro) e 90% (quase na borda) do raio da aura
+    float multiplicadorDistancia = (float)GetRandomValue(20, 60) / 100.0f;
+    float dist = raio_base * multiplicadorDistancia; 
+    
     Vector2 atual = { cosf(angulo_base) * dist, sinf(angulo_base) * dist };
     r.pontos.push_back(atual);
 
@@ -495,14 +505,16 @@ int main(void)
     galaxia.clear();
     
     // 1. CARREGAR IMAGENS
-    Image imgLogica = LoadImage("mapa_logica.png"); // Agora tem Verde, Vermelho e Branco
-    Image imgVisual = LoadImage("mapa_visual.png"); // Só serve para virar textura de fundo
+    Image imgLogica = LoadImage("mapa_logica.png");
+    Image imgVisual = LoadImage("mapa_visual.png");
+    Image imgPirata = LoadImage("mapa_pirata.png");
 
-    // Validação
+    // Validação e proteção caso falte o arquivo
     if (imgLogica.width == 0 || imgVisual.width == 0) {
         imgLogica = GenImageColor(1200, 700, BLACK);
         imgVisual = GenImageColor(1200, 700, BLACK);
     }
+    if (imgPirata.width == 0) imgPirata = GenImageColor(1200, 700, BLACK);
 
     // 2. PREPARAR O FUNDO (Visual)
     Texture2D texFundoGalaxia = LoadTextureFromImage(imgVisual);
@@ -843,9 +855,40 @@ int main(void)
         }
     }
 
+    // --- GERAÇÃO DE ZONAS PIRATAS  ---
+    std::vector<ZonaPirata> zonasPiratas;
+    const int QTD_PIRATAS = 20; 
+    int piratasCriados = 0;
+    int tentativasPiratas = 0; // Trava de segurança para não rodar infinito se o mapa estiver vazio
+
+    while (piratasCriados < QTD_PIRATAS && tentativasPiratas < 50000) {
+        int xImg = GetRandomValue(0, 1199);
+        int yImg = GetRandomValue(0, 699);
+        
+        Color pCor = GetImageColor(imgPirata, xImg, yImg);
+
+        // Tolerância para o Roxo (Alvo: 163, 73, 164)
+        if (pCor.r > 140 && pCor.r < 190 &&
+            pCor.g > 50  && pCor.g < 100 &&
+            pCor.b > 140 && pCor.b < 190) {
+            
+            ZonaPirata p;
+            // Escala 5x igual as estrelas
+            p.pos.x = (xImg * 5.0f) - 3000.0f;
+            p.pos.y = (yImg * 5.0f) - 1750.0f;
+            
+            // Tamanho reduzido pela metade conforme pedido
+            p.raio = (float)GetRandomValue(75, 175); 
+            
+            zonasPiratas.push_back(p);
+            piratasCriados++;
+        }
+        tentativasPiratas++;
+    }
+
     // Limpa a memória das imagens (A textura de fundo continua na GPU)
-    UnloadImage(imgLogica);
     UnloadImage(imgVisual);
+    UnloadImage(imgPirata);
 
     // --- INICIALIZAÇÃO DO PLAYER ---
     Player* jogador = new Player("Kreits"); // Instancia o Player e a Nave
@@ -874,6 +917,10 @@ int main(void)
         p.tam = (float)GetRandomValue(30, 60) / 10.0f;
     }
 
+    // --- VARIÁVEIS PARA O SPACE SHOOTER ---
+    bool rotaTemBoss = false;
+    float rotaDistanciaBoss = 0.0f;
+
     // --- VARIÁVEIS DE ROTA ---
     int destinoTracado = -1; 
     int timerCliqueBotao = 0;
@@ -881,8 +928,11 @@ int main(void)
     int meteorZoneRaio = GetRandomValue(100,1000);
 
     // CONTROLE DE EVENTOS
-    std::vector<Vector2> trechosPerigo; // x = inicio%, y = fim%
-    bool mostrarZonas = false;
+    std::vector<Vector2> trechosMeteoro; 
+    std::vector<Vector2> trechosPirata;
+
+    bool mostrarZonasMeteoros = false;
+    bool mostrarZonasPiratas = false;
 
     // Busca todas as estrelas sem chefe
     std::vector<int> estrelasSeguras;
@@ -1008,7 +1058,6 @@ int main(void)
     // --- GERAÇÃO DE ZONAS DE METEOR ZONES FIXAS ---
     std::vector<ZonaMeteoro> zonasMeteoros;
     const int QTD_ZONAS = 30; // Ajuste a quantidade de áreas perigosas
-    
     for (int i = 0; i < QTD_ZONAS; i++) {
         ZonaMeteoro z;
         z.pos.x = (float)GetRandomValue(-2400, 2400);
@@ -1130,24 +1179,21 @@ int main(void)
         }
 
         // --- SISTEMA DE CLIQUE E SELEÇÃO ---
-        // Primeiro verificamos se o mouse está em cima da UI para não deselecionar a estrela
         bool mouseNaUI = false;
+
+        // 1. Protege todo o painel de botões e filtros do lado direito da tela de uma vez
+        Rectangle painelDireito = { (float)screenWidth - 150, 10, 140, 340 };
+        if (CheckCollisionPointRec(mouseScreen, painelDireito)) mouseNaUI = true;
+
+        // 2. Verifica áreas clicáveis DENTRO da caixa de informações
         if (indexEstrelaSelecionada != -1) {
             Vector2 screenPos = GetWorldToScreen2D(galaxia[indexEstrelaSelecionada].pos, camera);
             int boxW = 280; 
             int boxH = 140; 
             
-            // VERIFICA SE TEM POSTO PARA AUMENTAR A ÁREA DE CLIQUE
             bool temPostoColisao = false;
             for (const auto& p : galaxia[indexEstrelaSelecionada].planetas) {
                 if (p.tipo_vida == 4) temPostoColisao = true;
-            }
-
-            if (indexEstrelaSelecionada == estrelaAtualPlayer) {
-                boxH = 170 + (galaxia[indexEstrelaSelecionada].planetas.size() * 15);
-                if (temPostoColisao) boxH += 45; 
-            } else {
-                boxH = 140; 
             }
 
             int boxX = screenPos.x + 30; int boxY = screenPos.y - 60;
@@ -1155,26 +1201,35 @@ int main(void)
             if (boxY + boxH > screenHeight) boxY = screenPos.y - boxH;
             if (boxY < 0) boxY = 10;
             
-            Rectangle boxRect = { (float)boxX, (float)boxY, (float)boxW, (float)boxH };
-            if (CheckCollisionPointRec(mouseScreen, boxRect)) mouseNaUI = true;
+            // Área Clicável 1: Região do Botão GO! e TRAÇAR ROTA
+            Rectangle btnAcoesDir = { (float)boxX + 140, (float)boxY + 85, (float)boxW - 150, 50 };
+            if (CheckCollisionPointRec(mouseScreen, btnAcoesDir)) mouseNaUI = true;
+
+            // Área Clicável 2: Botão de Comprar Fuel (se ele estiver na tela)
+            if (indexEstrelaSelecionada == estrelaAtualPlayer && temPostoColisao) {
+                int linhaYPosto = boxY + 90 + 15 + 20 + 20 + 15 + (galaxia[indexEstrelaSelecionada].planetas.size() * 15) + 10;
+                Rectangle btnComprarFuel = { (float)boxX + 10, (float)linhaYPosto, (float)boxW - 20, 30 };
+                if (CheckCollisionPointRec(mouseScreen, btnComprarFuel)) mouseNaUI = true;
+            }
+            
+            // OBS: Removemos a caixa total (boxRect) daqui! O fundo agora é vazado.
         }
             
-            // Impede que clicar no botão "VISUAL: ON/OFF" feche a janela da estrela
-            Rectangle btnVisual = { (float)screenWidth - 140, 20, 120, 30 };
-            if (CheckCollisionPointRec(mouseScreen, btnVisual)) mouseNaUI = true;
-
-            // Se clicou com o botão esquerdo e não foi em cima de nenhum botão/menu...
-            if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && !mouseNaUI) {
-                if (indexEstrelaFocada != -1) {
-                    indexEstrelaSelecionada = indexEstrelaFocada; // Seleciona a nova estrela
-                    focoCamera = indexEstrelaFocada; 
-                    cameraTravada = true;
-                } else {
-                    indexEstrelaSelecionada = -1; // Clicou no vazio, deseleciona e fecha a aba
-                }
+        // Se clicou com o botão esquerdo e não acertou NENHUM botão da UI...
+        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && !mouseNaUI) {
+            if (indexEstrelaFocada != -1) {
+                // Seleciona a nova estrela (inclusive clicando nela através do fundo da caixa!)
+                indexEstrelaSelecionada = indexEstrelaFocada; 
+                focoCamera = indexEstrelaFocada; 
+                cameraTravada = true;
+            } else {
+                // Clicou no vazio do espaço (ou no fundo transparente da caixa sem estrela atrás), deseleciona.
+                indexEstrelaSelecionada = -1; 
             }
+        }
 
-            // =============================================================
+            
+        // =============================================================
         // UI FIXA (SCREEN SPACE)
         // =============================================================
         
@@ -1351,12 +1406,11 @@ int main(void)
             posNaveAtual = galaxia[estrelaAtualPlayer].pos;
         }
 
-        // --- UPDATE GERAL ---
+            // --- UPDATE GERAL ---
         
-        // ROTAÇÃO DAS ZONAS DE PERIGO (Acompanham a gravidade da galáxia)
-        for (auto& z : zonasMeteoros) {
-            RotacionarPonto(z.pos, -0.009f); // Exatamente a mesma velocidade das estrelas
-        }
+        // ROTAÇÃO DAS ZONAS DE PERIGO
+        for (auto& z : zonasMeteoros) RotacionarPonto(z.pos, -0.009f);
+        for (auto& p : zonasPiratas) RotacionarPonto(p.pos, -0.009f);
 
         for (int i = 0; i < galaxia.size(); i++) {
             Estrela& e = galaxia[i]; 
@@ -1436,16 +1490,15 @@ int main(void)
                         break;
                 }
                 
-                // 3. EFEITOS (Só processa se estiver visível)
-                // Adicionei uma checagem extra de Culling aqui para performance máxima
-                // Se a estrela estiver fora da tela, NEM CALCULA PARTÍCULAS.
+                // 3. EFEITOS
+                // Calcula o raio sempre, pois as partículas precisam dele para saber quando morrer
+                float raio_visual = (float)e.nivel_atual / 2000.0f;
+                if (raio_visual < 15) raio_visual = 15;
                 
+                bool auraAtiva = (e.escala_atual > e.escala_minima + 0.05f);
 
-                if (e.escala_atual > e.escala_minima + 0.05f) {
-                     float raio_visual = (float)e.nivel_atual / 2000.0f;
-                     if (raio_visual < 15) raio_visual = 15;
-
-                     // Raios
+                // Raios (Só atualizam e aparecem se a aura estiver ligada)
+                if (auraAtiva) {
                      for (auto& r : e.raios) {
                         r.timer_troca--;
                         if (r.timer_troca <= 0) {
@@ -1455,17 +1508,36 @@ int main(void)
                             RegenerarRaio(r, raio_visual, seg_min, seg_max, escala);
                         }
                      }
-                     // Partículas
-                     if(e.nivel_atual > 500000) {
-                         for (auto& p : e.particulas_ki) {
-                            p.offset.x += p.velocidade.x; p.offset.y += p.velocidade.y;
-                            float distSq = (p.offset.x*p.offset.x) + (p.offset.y*p.offset.y);
-                            bool respawn = false;
-                            if(p.negativa) { if(distSq < 25.0f) respawn = true; } 
-                            else { p.vida -= 0.02f; if(p.vida <= 0 || distSq > (raio_visual*raio_visual)) respawn = true; }
+                }
 
-                            if(respawn) {
-                                p.vida = 1.0f; p.negativa = false;
+                if(e.nivel_atual > 500000) {
+                    int limite_spawns = (e.nivel_atual > 2000000) ? 5 : 2; 
+                    int spawns_feitos = 0;
+
+                    for (auto& p : e.particulas_ki) {
+                        float distSq = (p.offset.x*p.offset.x) + (p.offset.y*p.offset.y);
+                        bool morreu = false;
+
+                        if (p.vida > 0.0f) {
+                            p.offset.x += p.velocidade.x; 
+                            p.offset.y += p.velocidade.y;
+                            
+                            if(p.negativa) { 
+                                if(distSq < 25.0f) morreu = true; 
+                            } else { 
+                                p.vida -= 0.02f; 
+                                if(p.vida <= 0 || distSq > (raio_visual*raio_visual)) morreu = true; 
+                            }
+                        } else {
+                            morreu = true;
+                        }
+
+                        if(morreu) {
+                            p.vida = 0.0f; 
+                            if (spawns_feitos < limite_spawns && auraAtiva) {
+                                p.vida = 1.0f; 
+                                p.negativa = false;
+                                
                                 if(e.nivel_atual > 2000000 && GetRandomValue(0,100)<40) { 
                                     p.negativa = true; p.cor = BLACK;
                                     float ang = GetRandomValue(0,360)*DEG2RAD;
@@ -1485,9 +1557,10 @@ int main(void)
                                     else p.cor = ColorAlpha(e.cor_aura, 0.4f);
                                     p.tam = GetRandomValue(30,60)/10.0f;
                                 }
+                                spawns_feitos++;
                             }
-                         }
-                     }
+                        }
+                    }
                 }
             } 
 
@@ -1563,17 +1636,21 @@ int main(void)
                                
             }
 
-            // --- DESENHAR ZONAS DE METEOROS ---
-            if (mostrarZonas) {
-                BeginBlendMode(BLEND_ADDITIVE);
+            // --- DESENHAR ZONAS DE METEOROS E PIRATAS ---
+            BeginBlendMode(BLEND_ADDITIVE);
+            if (mostrarZonasMeteoros) {
                 for (const auto& z : zonasMeteoros) {
-                    // Gradiente vermelho esfumaçado
                     DrawCircleGradient(z.pos.x, z.pos.y, z.raio, ColorAlpha(RED, 0.85f), BLANK);
-                    // Borda sutil
                     DrawCircleLines(z.pos.x, z.pos.y, z.raio, ColorAlpha(RED, 0.05f));
                 }
-                EndBlendMode();
             }
+            if (mostrarZonasPiratas) {
+                for (const auto& p : zonasPiratas) {
+                    DrawCircleGradient(p.pos.x, p.pos.y, p.raio, ColorAlpha(PURPLE, 0.85f), BLANK);
+                    DrawCircleLines(p.pos.x, p.pos.y, p.raio, ColorAlpha(PURPLE, 0.05f));
+                }
+            }
+            EndBlendMode();
 
             // 2. Poeira (Opcional, pode tirar se o fundo já for bonito)
             for(const auto& p : poeira) DrawPixelV(p, {255, 255, 255, 30});
@@ -1753,62 +1830,59 @@ int main(void)
                 Vector2 posOrigem = posNaveAtual;
                 Vector2 posDestino = galaxia[destinoTracado].pos;
                 
-                // DESENHA ROTA VERDE BASE (Cobre tudo)
+                // Rota Verde
                 BeginBlendMode(BLEND_ADDITIVE);
                 DrawLineEx(posOrigem, posDestino, 20.0f, ColorAlpha(GREEN, 0.4f));
                 EndBlendMode();
                 DrawLineEx(posOrigem, posDestino, 6.0f, GREEN);
 
-                // DESENHA OS TRECHOS DE PERIGO POR CIMA
-                for (const auto& trecho : trechosPerigo) {
-                    Vector2 inicioPerigo = {
-                        posOrigem.x + (posDestino.x - posOrigem.x) * trecho.x,
-                        posOrigem.y + (posDestino.y - posOrigem.y) * trecho.x
-                    };
-                    Vector2 fimPerigo = {
-                        posOrigem.x + (posDestino.x - posOrigem.x) * trecho.y,
-                        posOrigem.y + (posDestino.y - posOrigem.y) * trecho.y
-                    };
-                    
-                    // Camadas Vermelhas
-                    BeginBlendMode(BLEND_ADDITIVE);
-                    DrawLineEx(inicioPerigo, fimPerigo, 28.0f, ColorAlpha(RED, 0.6f));       
-                    EndBlendMode();
-                    DrawLineEx(inicioPerigo, fimPerigo, 10.0f, RED);       
-                    
-                    Vector2 meioEvento = { (inicioPerigo.x + fimPerigo.x) / 2.0f, (inicioPerigo.y + fimPerigo.y) / 2.0f };
-                    
-                    // Ícone Alerta
-                    float pulso = sin(GetTime() * 15.0f) * 4.0f;
-                    BeginBlendMode(BLEND_ADDITIVE);
-                    DrawCircleLines(meioEvento.x, meioEvento.y, 20.0f + pulso, ColorAlpha(RED, 0.5f));
-                    EndBlendMode();
-                    DrawCircleLines(meioEvento.x, meioEvento.y, 16.0f + pulso, RED);
-                    int tamFonte = 30 + (int)pulso;
-                    int larguraExcl = MeasureText("!", tamFonte);
-                    DrawText("!", (int)meioEvento.x - (larguraExcl / 2), (int)meioEvento.y - (tamFonte / 2), tamFonte, WHITE);
+                // Lambda para desenhar as fitas de perigo
+                auto DesenharFitaPerigo = [&](const std::vector<Vector2>& trechos, Color cor, const char* texto) {
+                    for (const auto& trecho : trechos) {
+                        Vector2 inicioPerigo = { posOrigem.x + (posDestino.x - posOrigem.x) * trecho.x, posOrigem.y + (posDestino.y - posOrigem.y) * trecho.x };
+                        Vector2 fimPerigo = { posOrigem.x + (posDestino.x - posOrigem.x) * trecho.y, posOrigem.y + (posDestino.y - posOrigem.y) * trecho.y };
+                        
+                        BeginBlendMode(BLEND_ADDITIVE);
+                        DrawLineEx(inicioPerigo, fimPerigo, 28.0f, ColorAlpha(cor, 0.6f));       
+                        EndBlendMode();
+                        DrawLineEx(inicioPerigo, fimPerigo, 10.0f, cor);       
+                        
+                        Vector2 meioEvento = { (inicioPerigo.x + fimPerigo.x) / 2.0f, (inicioPerigo.y + fimPerigo.y) / 2.0f };
+                        
+                        float pulso = sin(GetTime() * 15.0f) * 4.0f;
+                        BeginBlendMode(BLEND_ADDITIVE);
+                        DrawCircleLines(meioEvento.x, meioEvento.y, 20.0f + pulso, ColorAlpha(cor, 0.5f));
+                        EndBlendMode();
+                        DrawCircleLines(meioEvento.x, meioEvento.y, 16.0f + pulso, cor);
+                        int tamFonte = 30 + (int)pulso;
+                        int larguraExcl = MeasureText("!", tamFonte);
+                        DrawText("!", (int)meioEvento.x - (larguraExcl / 2), (int)meioEvento.y - (tamFonte / 2), tamFonte, WHITE);
 
-                    // Texto METEOR ZONE na fita
-                    float dxEv = fimPerigo.x - inicioPerigo.x;
-                    float dyEv = fimPerigo.y - inicioPerigo.y;
-                    float distEv = sqrt(dxEv*dxEv + dyEv*dyEv);
-                    float ang = atan2f(dyEv, dxEv) * RAD2DEG;
-                    
-                    int fSize = 15;
-                    std::string txtBase = "METEOR ZONE == ";
-                    int reps = (int)(distEv / MeasureText(txtBase.c_str(), fSize));
-                    if (reps < 1) reps = 1;
+                        float dxEv = fimPerigo.x - inicioPerigo.x;
+                        float dyEv = fimPerigo.y - inicioPerigo.y;
+                        float distEv = sqrt(dxEv*dxEv + dyEv*dyEv);
+                        float ang = atan2f(dyEv, dxEv) * RAD2DEG;
+                        
+                        int fSize = 15;
+                        std::string txtBase = std::string(texto) + " == ";
+                        int reps = (int)(distEv / MeasureText(txtBase.c_str(), fSize));
+                        if (reps < 1) reps = 1;
 
-                    std::string txtFinal = "";
-                    for (int i=0; i<reps; i++) txtFinal += txtBase;
-                    if (txtFinal.length() > 4) txtFinal = txtFinal.substr(0, txtFinal.length() - 4);
+                        std::string txtFinal = "";
+                        for (int i=0; i<reps; i++) txtFinal += txtBase;
+                        if (txtFinal.length() > 4) txtFinal = txtFinal.substr(0, txtFinal.length() - 4);
 
-                    float offY = 25.0f; 
-                    if (dxEv < 0) { ang += 180.0f; offY = -15.0f; }
+                        float offY = 25.0f; 
+                        if (dxEv < 0) { ang += 180.0f; offY = -15.0f; }
 
-                    Vector2 orgTxt = { MeasureText(txtFinal.c_str(), fSize) / 2.0f, offY };
-                    DrawTextPro(GetFontDefault(), txtFinal.c_str(), meioEvento, orgTxt, ang, (float)fSize, 2.0f, RED);
-                }
+                        Vector2 orgTxt = { MeasureText(txtFinal.c_str(), fSize) / 2.0f, offY };
+                        DrawTextPro(GetFontDefault(), txtFinal.c_str(), meioEvento, orgTxt, ang, (float)fSize, 2.0f, cor);
+                    }
+                };
+
+                // Executa o desenho para as duas zonas
+                DesenharFitaPerigo(trechosMeteoro, RED, "METEOR ZONE");
+                DesenharFitaPerigo(trechosPirata, PURPLE, "PIRATE ZONE");
                 
                 // Radar pulsante no destino
                 float pulsoRota = sin(GetTime() * 8.0f) * 8.0f;
@@ -1817,8 +1891,18 @@ int main(void)
 
             // --- DESENHO DO RAIO DE ALCANCE RÁPIDO (10 AL) ---
             if (estrelaAtualPlayer >= 0 && !animandoViagem) {
-                DrawCircleLines(posNaveAtual.x, posNaveAtual.y, 100.0f, ColorAlpha(WHITE, 0.2f));
-                DrawCircleLines(posNaveAtual.x, posNaveAtual.y, 102.0f, ColorAlpha(SKYBLUE, 0.1f));
+                // Modo Aditivo para fazer o azul brilhar como um holograma
+                BeginBlendMode(BLEND_ADDITIVE);
+                
+                // Preenchimento suave
+                DrawCircleGradient(posNaveAtual.x, posNaveAtual.y, 100.0f, ColorAlpha(SKYBLUE, 0.15f), BLANK);
+                
+                // Bordas triplas para dar efeito de neon
+                DrawCircleLines(posNaveAtual.x, posNaveAtual.y, 100.0f, ColorAlpha(SKYBLUE, 0.9f));
+                DrawCircleLines(posNaveAtual.x, posNaveAtual.y, 99.0f, ColorAlpha(BLUE, 0.5f));
+                DrawCircleLines(posNaveAtual.x, posNaveAtual.y, 101.0f, ColorAlpha(BLUE, 0.5f));
+                
+                EndBlendMode();
             }
 
             // --- DESENHAR MARCADORES DE POSTOS VISITADOS ---
@@ -1836,7 +1920,8 @@ int main(void)
             // =============================================================
             // 4. INDICADOR DO JOGADOR
             // =============================================================
-            bool mostrarPlayer = (estrelaAtualPlayer != estrelaCasaPlayer) || animandoViagem;
+            bool mostrarPlayer = (estrelaAtualPlayer != estrelaCasaPlayer) || animandoViagem || (timerPingPlayer > 0.0f);
+            
             if (estrelaAtualPlayer >= 0 && estrelaAtualPlayer < galaxia.size() && mostrarPlayer) {
                 Vector2 posPlayer = posNaveAtual;
 
@@ -1928,7 +2013,7 @@ int main(void)
 
         // --- BOTÃO TOGGLE VISUAL ---
         // 1. Definir área do botão (Canto Superior Direito)
-        btnVisual = { (float)screenWidth - 140, 20, 120, 30 };
+        Rectangle btnVisual = { (float)screenWidth - 140, 20, 120, 30 };
         
         // 2. Lógica de Clique (Mouse dentro do retangulo + Clique Esquerdo)
         // Usamos GetMousePosition() direto, pois estamos na UI (sem zoom da camera)
@@ -1949,38 +2034,36 @@ int main(void)
         const char* textoBtn = mostrarVisual ? "VISUAL: ON" : "VISUAL: OFF";
         DrawText(textoBtn, (int)btnVisual.x + 10, (int)btnVisual.y + 8, 10, WHITE);
 
-        // --- BOTÃO ZONAS DE RISCO ---
-        Rectangle btnZonas = { (float)screenWidth - 140, 60, 120, 30 }; // Fica 40px abaixo do outro
-        if (CheckCollisionPointRec(GetMousePosition(), btnZonas)) {
-            if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
-                mostrarZonas = !mostrarZonas;
-            }
+        // --- BOTÃO ZONAS DE METEORO ---
+        Rectangle btnMeteoros = { (float)screenWidth - 140, 60, 120, 30 }; 
+        if (CheckCollisionPointRec(GetMousePosition(), btnMeteoros) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+            mostrarZonasMeteoros = !mostrarZonasMeteoros;
         }
-        
-        Color corBtnZonas = mostrarZonas ? DARKGREEN : DARKGRAY;
-        DrawRectangleRec(btnZonas, corBtnZonas);
-        DrawRectangleLinesEx(btnZonas, 2, WHITE);
-        const char* textoBtnZonas = mostrarZonas ? "ZONAS: ON" : "ZONAS: OFF";
-        DrawText(textoBtnZonas, (int)btnZonas.x + 10, (int)btnZonas.y + 8, 10, WHITE);
+        DrawRectangleRec(btnMeteoros, mostrarZonasMeteoros ? DARKGREEN : DARKGRAY);
+        DrawRectangleLinesEx(btnMeteoros, 2, WHITE);
+        DrawText(mostrarZonasMeteoros ? "METEORS: ON" : "METEORS: OFF", (int)btnMeteoros.x + 10, (int)btnMeteoros.y + 8, 10, WHITE);
 
-        // BOTAO POSTOS IPIRANGA
-        // --- BOTÃO ZONAS DE RISCO ---
-        Rectangle btnPosto = { (float)screenWidth - 140, 100, 120, 30 }; // Fica 40px abaixo do outro
-        if (CheckCollisionPointRec(GetMousePosition(), btnPosto)) {
-            if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
-                mostrarPosto = !mostrarPosto;
-            }
+        // --- BOTÃO ZONAS PIRATAS ---
+        Rectangle btnPiratas = { (float)screenWidth - 140, 100, 120, 30 }; 
+        if (CheckCollisionPointRec(GetMousePosition(), btnPiratas) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+            mostrarZonasPiratas = !mostrarZonasPiratas;
         }
-        
-        Color corBtnPosto = mostrarPosto ? DARKGREEN : DARKGRAY;
-        DrawRectangleRec(btnPosto, corBtnPosto);
+        DrawRectangleRec(btnPiratas, mostrarZonasPiratas ? DARKGREEN : DARKGRAY);
+        DrawRectangleLinesEx(btnPiratas, 2, WHITE);
+        DrawText(mostrarZonasPiratas ? "PIRATES: ON" : "PIRATES: OFF", (int)btnPiratas.x + 10, (int)btnPiratas.y + 8, 10, WHITE);
+
+        // --- BOTÃO POSTOS ---
+        Rectangle btnPosto = { (float)screenWidth - 140, 140, 120, 30 }; 
+        if (CheckCollisionPointRec(GetMousePosition(), btnPosto) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+            mostrarPosto = !mostrarPosto;
+        }
+        DrawRectangleRec(btnPosto, mostrarPosto ? DARKGREEN : DARKGRAY);
         DrawRectangleLinesEx(btnPosto, 2, WHITE);
-        const char* textoBtnPosto = mostrarPosto ? "POSTOS: ON" : "POSTOS: OFF";
-        DrawText(textoBtnPosto, (int)btnPosto.x + 10, (int)btnPosto.y + 8, 10, WHITE);
+        DrawText(mostrarPosto ? "POSTOS: ON" : "POSTOS: OFF", (int)btnPosto.x + 10, (int)btnPosto.y + 8, 10, WHITE);
 
         // --- PAINEL DE FILTROS (Lado Direito) ---
         float xFiltro = (float)screenWidth - 140;
-        float yFiltro = 140; // Começa abaixo do botão de Radar Fuel
+        float yFiltro = 180;
 
         struct FiltroUI { bool* valor; const char* label; Color cor; };
         FiltroUI filtros[] = {
@@ -2006,16 +2089,14 @@ int main(void)
         // =============================================================
         // 4. INTERFACE DE INFORMAÇÕES (HOVER E SELEÇÃO MULTIPLA)
         // =============================================================
-        // Cria uma lista de UIs que precisam aparecer neste frame
         std::vector<int> estrelasParaMostrar;
         
-        // 1º Colocamos a Selecionada (Ela é desenhada primeiro, ficando "no fundo" se cruzar)
         if (indexEstrelaSelecionada != -1) {
+            // Se o jogador clicou e selecionou uma estrela, a UI foca 100% nela.
+            // Ignora o hover de outras estrelas, impedindo a sobreposição.
             estrelasParaMostrar.push_back(indexEstrelaSelecionada);
-        }
-        
-        // 2º Colocamos a do Hover, CASO seja uma estrela diferente da selecionada
-        if (indexEstrelaFocada != -1 && indexEstrelaFocada != indexEstrelaSelecionada) {
+        } else if (indexEstrelaFocada != -1) {
+            // Se NÃO tem nenhuma selecionada, mostra livremente a do mouse (Hover).
             estrelasParaMostrar.push_back(indexEstrelaFocada);
         }
 
@@ -2046,7 +2127,7 @@ int main(void)
             // --- CÁLCULO DINÂMICO DA ALTURA DA CAIXA ---
             if (ehSelecionada && indexUI == estrelaAtualPlayer) {
                 boxH = 170 + (estrelaUI->planetas.size() * 15);
-                if (temPosto) boxH += 45; // Mais espaço para o botão do posto
+                if (temPosto) boxH += 45;
             } else if (ehSelecionada && indexUI != estrelaAtualPlayer) {
                 boxH = 140; 
             }
@@ -2060,7 +2141,7 @@ int main(void)
             Color borda = estrelaUI->tem_chefe ? estrelaUI->cor_aura : GREEN;
             if (indexUI == estrelaAtualPlayer) borda = YELLOW; // Destaque para a estrela atual
 
-            // DESENHA A CAIXA ORIGINAL (Agora com altura ajustada)
+            // DESENHA A CAIXA DE INFORMAÇÕES
             DrawRectangle(boxX, boxY, boxW, boxH, Fade(BLACK, 0.2f));
             DrawRectangle(boxX, boxY, boxW, boxH, Fade(WHITE, 0.1f));
             DrawRectangle(boxX, boxY, boxW, boxH, Fade(GREEN, 0.1f));
@@ -2153,7 +2234,8 @@ int main(void)
                                 destinoTracado = -1; 
                             } else {
                                 destinoTracado = indexUI; 
-                                trechosPerigo.clear(); 
+                                trechosMeteoro.clear(); 
+                                trechosPirata.clear();
                                 
                                 Vector2 A = posNaveAtual;
                                 Vector2 B = galaxia[destinoTracado].pos;
@@ -2162,49 +2244,73 @@ int main(void)
                                 float distRota = sqrt(dx_r*dx_r + dy_r*dy_r);
                                 
                                 if (distRota > 0) {
-                                    Vector2 dir = { dx_r / distRota, dy_r / distRota }; 
+                                    Vector2 dir = { dx_r / distRota, dy_r / distRota };
                                     
-                                    for (const auto& z : zonasMeteoros) {
-                                        Vector2 AC = { z.pos.x - A.x, z.pos.y - A.y };
+                                    // --- SCAN DE DARK ZONE (BOSS DO SPACE SHOOTER) ---
+                                    rotaTemBoss = false;
+                                    rotaDistanciaBoss = 0.0f;
+
+                                    // "Caminha" pela linha da rota a cada 10 pixels do mundo
+                                    for (float t = 0; t < distRota; t += 10.0f) {
+                                        Vector2 checkPos = { A.x + dir.x * t, A.y + dir.y * t };
+                                        
+                                        // Converte posição do Mundo de volta para posição da Imagem
+                                        int imgX = (int)((checkPos.x + 3000.0f) / 5.0f);
+                                        int imgY = (int)((checkPos.y + 1750.0f) / 5.0f);
+
+                                        // Prevenção de Crash
+                                        if (imgX >= 0 && imgX < imgLogica.width && imgY >= 0 && imgY < imgLogica.height) {
+                                            Color corPixel = GetImageColor(imgLogica, imgX, imgY);
+                                            
+                                            // Se for preto/vazio (RGB menor que 15 pra ter tolerância), achou o Abismo!
+                                            if (corPixel.r < 15 && corPixel.g < 15 && corPixel.b < 15) {
+                                                rotaTemBoss = true;
+                                                rotaDistanciaBoss = t; // Salva a distância no mundo
+                                                break; // Já achou o ponto de spawn do boss, para o loop
+                                            }
+                                        }
+                                    }
+                                    
+                                    // Função Lambda para calcular a interseção e adicionar ao vetor
+                                    auto CalcularIntersecao = [&](Vector2 posZona, float raioZona, std::vector<Vector2>& vetorTrechos) {
+                                        Vector2 AC = { posZona.x - A.x, posZona.y - A.y };
                                         float t = (AC.x * dir.x) + (AC.y * dir.y); 
                                         Vector2 pontoMaisProximo = { A.x + dir.x * t, A.y + dir.y * t };
                                         
-                                        float distCentroSq = (z.pos.x - pontoMaisProximo.x)*(z.pos.x - pontoMaisProximo.x) + 
-                                                             (z.pos.y - pontoMaisProximo.y)*(z.pos.y - pontoMaisProximo.y);
+                                        float distCentroSq = (posZona.x - pontoMaisProximo.x)*(posZona.x - pontoMaisProximo.x) + 
+                                                             (posZona.y - pontoMaisProximo.y)*(posZona.y - pontoMaisProximo.y);
                                         
-                                        if (distCentroSq < (z.raio * z.raio)) {
-                                            float metadeCorda = sqrt((z.raio * z.raio) - distCentroSq); 
+                                        if (distCentroSq < (raioZona * raioZona)) {
+                                            float metadeCorda = sqrt((raioZona * raioZona) - distCentroSq); 
                                             float entra = t - metadeCorda;
                                             float sai = t + metadeCorda;
                                             
                                             if (entra < distRota && sai > 0) {
                                                 if (entra < 0) entra = 0;
                                                 if (sai > distRota) sai = distRota;
-                                                trechosPerigo.push_back({ entra / distRota, sai / distRota });
+                                                vetorTrechos.push_back({ entra / distRota, sai / distRota });
                                             }
                                         }
-                                    }
+                                    };
 
-                                    if (!trechosPerigo.empty()) {
-                                        std::sort(trechosPerigo.begin(), trechosPerigo.end(), [](const Vector2& a, const Vector2& b) {
-                                            return a.x < b.x;
-                                        });
+                                    for (const auto& z : zonasMeteoros) CalcularIntersecao(z.pos, z.raio, trechosMeteoro);
+                                    for (const auto& p : zonasPiratas) CalcularIntersecao(p.pos, p.raio, trechosPirata);
 
+                                    // Lambda para mesclar trechos sobrepostos (Otimização visual)
+                                    auto MesclarTrechos = [](std::vector<Vector2>& trechos) {
+                                        if (trechos.empty()) return;
+                                        std::sort(trechos.begin(), trechos.end(), [](const Vector2& a, const Vector2& b) { return a.x < b.x; });
                                         std::vector<Vector2> mesclados;
-                                        mesclados.push_back(trechosPerigo[0]);
-
-                                        for (size_t i = 1; i < trechosPerigo.size(); i++) {
-                                            Vector2& ultimo = mesclados.back();
-                                            Vector2 atual = trechosPerigo[i];
-                                            
-                                            if (atual.x <= ultimo.y) {
-                                                ultimo.y = fmaxf(ultimo.y, atual.y);
-                                            } else { 
-                                                mesclados.push_back(atual);
-                                            }
+                                        mesclados.push_back(trechos[0]);
+                                        for (size_t i = 1; i < trechos.size(); i++) {
+                                            if (trechos[i].x <= mesclados.back().y) mesclados.back().y = fmaxf(mesclados.back().y, trechos[i].y);
+                                            else mesclados.push_back(trechos[i]);
                                         }
-                                        trechosPerigo = mesclados;
-                                    }
+                                        trechos = mesclados;
+                                    };
+
+                                    MesclarTrechos(trechosMeteoro);
+                                    MesclarTrechos(trechosPirata);
                                 }
                             }
                         }
@@ -2229,6 +2335,10 @@ int main(void)
                     DrawText(TextFormat("Distancia:\n %d AL", distanciaAnosLuz), boxX + 8, boxY + 78, 16, WHITE);
                     //DrawText(TextFormat("Distancia:\n %d AL", distanciaAnosLuz), boxX + 10, boxY + 80, 15, BLACK);
                     DrawText(TextFormat("Custo de Gasol: %dL", custoFuel), boxX + 10, boxY + 110, 10, temFuel ? ORANGE : RED);
+                    if (rotaTemBoss) {
+                        int distBossAL = (int)(rotaDistanciaBoss / 10.0f);
+                        DrawText(TextFormat("DARK ZONE: BOSS EM %d AL", distBossAL), boxX + 10, boxY + 130, 10, RED);
+                    }
                     
                 } else {
                     // --- DADOS DA ESTRELA ATUAL
@@ -2328,6 +2438,7 @@ int main(void)
     CloseWindow();
     for (const auto& tex : bgTextures) UnloadTexture(tex);
      UnloadTexture(texFundoGalaxia);
+     UnloadImage(imgLogica);
     //UnloadTexture(texturaAura);    
     return 0;
 }
