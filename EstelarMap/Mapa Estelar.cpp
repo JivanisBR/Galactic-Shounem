@@ -4,6 +4,8 @@
 #include <string>
 #include <cmath>
 #include <algorithm>
+#include <fstream>
+#include <cstdlib>
 #include "Player.h"
 #include "Nave.h"
 
@@ -93,6 +95,11 @@ struct ZonaMeteoro {
 struct ZonaPirata {
     Vector2 pos;
     float raio;
+};
+
+struct EventoViagem {
+    int inicioAL;
+    int fimAL;
 };
 
 struct Nebulosa {
@@ -920,6 +927,10 @@ int main(void)
     // --- VARIÁVEIS PARA O SPACE SHOOTER ---
     bool rotaTemBoss = false;
     float rotaDistanciaBoss = 0.0f;
+    std::vector<EventoViagem> exportMeteoros;
+    std::vector<EventoViagem> exportPiratas;
+    std::vector<EventoViagem> exportBosses;
+    int distanciaTotalViagemAL = 0;
 
     // --- VARIÁVEIS DE ROTA ---
     int destinoTracado = -1; 
@@ -1066,7 +1077,9 @@ int main(void)
         zonasMeteoros.push_back(z);
     }
 
-    while (!WindowShouldClose()) {
+    bool iniciarViagemExecutavel = false; // Flag para fechar o mapa e abrir o minigame
+
+    while (!WindowShouldClose() && !iniciarViagemExecutavel) {
         
         // =============================================================
         // --- INPUT & CÂMERA (CONTROLES DE MAPA TÁTICO) ---
@@ -1574,7 +1587,6 @@ int main(void)
         }
 
             // --- DRAW ---
-        // --- DRAW ---
         BeginDrawing();
         ClearBackground(BLACK);
 
@@ -2245,46 +2257,52 @@ int main(void)
                                 
                                 if (distRota > 0) {
                                     Vector2 dir = { dx_r / distRota, dy_r / distRota };
+                                    distanciaTotalViagemAL = (int)(distRota / 10.0f); 
                                     
+                                    exportMeteoros.clear();
+                                    exportPiratas.clear();
+                                    exportBosses.clear();
+
                                     // --- SCAN DE DARK ZONE (BOSS DO SPACE SHOOTER) ---
                                     rotaTemBoss = false;
                                     rotaDistanciaBoss = 0.0f;
+                                    bool noAbismo = false;
+                                    float inicioAbismo = 0.0f;
 
-                                    // "Caminha" pela linha da rota a cada 10 pixels do mundo
                                     for (float t = 0; t < distRota; t += 10.0f) {
                                         Vector2 checkPos = { A.x + dir.x * t, A.y + dir.y * t };
-                                        
-                                        // Converte posição do Mundo de volta para posição da Imagem
                                         int imgX = (int)((checkPos.x + 3000.0f) / 5.0f);
                                         int imgY = (int)((checkPos.y + 1750.0f) / 5.0f);
 
-                                        // Prevenção de Crash
+                                        bool pixelPreto = false;
                                         if (imgX >= 0 && imgX < imgLogica.width && imgY >= 0 && imgY < imgLogica.height) {
                                             Color corPixel = GetImageColor(imgLogica, imgX, imgY);
-                                            
-                                            // Se for preto/vazio (RGB menor que 15 pra ter tolerância), achou o Abismo!
                                             if (corPixel.r < 15 && corPixel.g < 15 && corPixel.b < 15) {
-                                                rotaTemBoss = true;
-                                                rotaDistanciaBoss = t; // Salva a distância no mundo
-                                                break; // Já achou o ponto de spawn do boss, para o loop
+                                                pixelPreto = true;
+                                                if (!rotaTemBoss) { rotaTemBoss = true; rotaDistanciaBoss = t; }
                                             }
                                         }
+
+                                        if (pixelPreto && !noAbismo) {
+                                            noAbismo = true; inicioAbismo = t;
+                                        } else if (!pixelPreto && noAbismo) {
+                                            noAbismo = false;
+                                            exportBosses.push_back({ (int)(inicioAbismo / 10.0f), (int)(t / 10.0f) });
+                                        }
                                     }
-                                    
-                                    // Função Lambda para calcular a interseção e adicionar ao vetor
+                                    if (noAbismo) exportBosses.push_back({ (int)(inicioAbismo / 10.0f), (int)(distRota / 10.0f) });
+
+                                    // --- INTERSEÇÕES (METEOROS E PIRATAS) ---
                                     auto CalcularIntersecao = [&](Vector2 posZona, float raioZona, std::vector<Vector2>& vetorTrechos) {
                                         Vector2 AC = { posZona.x - A.x, posZona.y - A.y };
                                         float t = (AC.x * dir.x) + (AC.y * dir.y); 
                                         Vector2 pontoMaisProximo = { A.x + dir.x * t, A.y + dir.y * t };
-                                        
                                         float distCentroSq = (posZona.x - pontoMaisProximo.x)*(posZona.x - pontoMaisProximo.x) + 
                                                              (posZona.y - pontoMaisProximo.y)*(posZona.y - pontoMaisProximo.y);
-                                        
                                         if (distCentroSq < (raioZona * raioZona)) {
                                             float metadeCorda = sqrt((raioZona * raioZona) - distCentroSq); 
                                             float entra = t - metadeCorda;
                                             float sai = t + metadeCorda;
-                                            
                                             if (entra < distRota && sai > 0) {
                                                 if (entra < 0) entra = 0;
                                                 if (sai > distRota) sai = distRota;
@@ -2296,21 +2314,24 @@ int main(void)
                                     for (const auto& z : zonasMeteoros) CalcularIntersecao(z.pos, z.raio, trechosMeteoro);
                                     for (const auto& p : zonasPiratas) CalcularIntersecao(p.pos, p.raio, trechosPirata);
 
-                                    // Lambda para mesclar trechos sobrepostos (Otimização visual)
-                                    auto MesclarTrechos = [](std::vector<Vector2>& trechos) {
-                                        if (trechos.empty()) return;
-                                        std::sort(trechos.begin(), trechos.end(), [](const Vector2& a, const Vector2& b) { return a.x < b.x; });
+                                    // Lambda para mesclar o visual e já exportar para o .txt em Anos-Luz
+                                    auto MesclarEExportar = [&](std::vector<Vector2>& trechosRaw, std::vector<EventoViagem>& exportLista) {
+                                        if (trechosRaw.empty()) return;
+                                        std::sort(trechosRaw.begin(), trechosRaw.end(), [](const Vector2& a, const Vector2& b) { return a.x < b.x; });
                                         std::vector<Vector2> mesclados;
-                                        mesclados.push_back(trechos[0]);
-                                        for (size_t i = 1; i < trechos.size(); i++) {
-                                            if (trechos[i].x <= mesclados.back().y) mesclados.back().y = fmaxf(mesclados.back().y, trechos[i].y);
-                                            else mesclados.push_back(trechos[i]);
+                                        mesclados.push_back(trechosRaw[0]);
+                                        for (size_t i = 1; i < trechosRaw.size(); i++) {
+                                            if (trechosRaw[i].x <= mesclados.back().y) mesclados.back().y = fmaxf(mesclados.back().y, trechosRaw[i].y);
+                                            else mesclados.push_back(trechosRaw[i]);
                                         }
-                                        trechos = mesclados;
+                                        trechosRaw = mesclados; // Mantém a versão original para o Desenho
+                                        for (const auto& m : mesclados) {
+                                            exportLista.push_back({ (int)((m.x * distRota) / 10.0f), (int)((m.y * distRota) / 10.0f) });
+                                        }
                                     };
 
-                                    MesclarTrechos(trechosMeteoro);
-                                    MesclarTrechos(trechosPirata);
+                                    MesclarEExportar(trechosMeteoro, exportMeteoros);
+                                    MesclarEExportar(trechosPirata, exportPiratas);
                                 }
                             }
                         }
@@ -2432,6 +2453,62 @@ int main(void)
         DrawText(TextFormat("TIMER CONDENSATOR: %d", (int)jogador->minhaNave->timerCondensador), 20, 140, 10, ORANGE);
         DrawText(TextFormat("DINHEIRO: $%.2f", jogador->dinheiro), 20, 160, 10, GREEN);
 
+        // =============================================================
+        // 6. BOTÃO MESTRE: INICIAR VIAGEM (Exportar e Mudar de Jogo)
+        // =============================================================
+        if (destinoTracado != -1 && !animandoViagem) {
+            int btnVW = 300;
+            int btnVH = 50;
+            Rectangle btnViagem = { (float)(screenWidth / 2) - (btnVW / 2), (float)screenHeight - 80, (float)btnVW, (float)btnVH };
+            
+            bool hoverViagem = CheckCollisionPointRec(GetMousePosition(), btnViagem);
+            
+            if (hoverViagem && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+                
+                // 1. CRIA O ARQUIVO DE CONTRATO (SAVE TEMPORÁRIO)
+                std::ofstream arquivo("../SpaceShooter/viagem_data.txt");
+                
+                if (arquivo.is_open()) {
+                    // --- DADOS DO JOGADOR ---
+                    arquivo << "PLAYER_NOME " << jogador->nome << "\n";
+                    arquivo << "PLAYER_VIDA " << jogador->vidaAtual << " " << jogador->vidaMaxima << "\n";
+                    arquivo << "PLAYER_KI " << jogador->kiAtual << " " << jogador->kiMaximo << "\n";
+                    arquivo << "PLAYER_PDL " << jogador->pdlAtual << " " << jogador->pdlMaximo << "\n";
+                    arquivo << "PLAYER_DINHEIRO " << jogador->dinheiro << "\n";
+                    
+                    // --- DADOS DA NAVE ---
+                    arquivo << "NAVE_COMBUSTIVEL " << jogador->minhaNave->combustivelAtual << " " << jogador->minhaNave->combustivelMaximo << "\n";
+                    arquivo << "NAVE_ESCUDO " << jogador->minhaNave->escudoAtual << " " << jogador->minhaNave->escudoMaximo << "\n";
+                    arquivo << "NAVE_MINERIOS " << jogador->minhaNave->invFerro << " " << jogador->minhaNave->invPrata << " " << jogador->minhaNave->invOuro << "\n";
+                    arquivo << "NAVE_UPGRADES " << jogador->minhaNave->forcaTurbo << " " << jogador->minhaNave->eficienciaCombustivel << " " << jogador->minhaNave->taxaConsumoBase << "\n";
+
+                    // --- DADOS DA VIAGEM ---
+                    arquivo << "VIAGEM_DISTANCIA " << distanciaTotalViagemAL << "\n";
+
+                    // --- EVENTOS DE ROTA ---
+                    arquivo << "QTD_METEOROS " << exportMeteoros.size() << "\n";
+                    for (const auto& m : exportMeteoros) arquivo << m.inicioAL << " " << m.fimAL << "\n";
+
+                    arquivo << "QTD_PIRATAS " << exportPiratas.size() << "\n";
+                    for (const auto& p : exportPiratas) arquivo << p.inicioAL << " " << p.fimAL << "\n";
+
+                    arquivo << "QTD_BOSSES " << exportBosses.size() << "\n";
+                    for (const auto& b : exportBosses) arquivo << b.inicioAL << " " << b.fimAL << "\n";
+
+                    arquivo.close();
+                    
+                    // 2. ATIVA A FLAG PARA SAIR DO LOOP E LIMPAR A MEMÓRIA
+                    iniciarViagemExecutavel = true;
+                }
+            }
+
+            // --- DESENHO DO BOTÃO ---
+            DrawRectangleRec(btnViagem, hoverViagem ? LIME : DARKGREEN);
+            DrawRectangleLinesEx(btnViagem, 3, WHITE);
+            int txtVW = MeasureText("INICIAR VIAGEM", 20);
+            DrawText("INICIAR VIAGEM", (int)(btnViagem.x + (btnVW / 2) - (txtVW / 2)), (int)(btnViagem.y + 15), 20, hoverViagem ? BLACK : WHITE);
+        }
+
         EndDrawing();
     }
     
@@ -2440,5 +2517,14 @@ int main(void)
      UnloadTexture(texFundoGalaxia);
      UnloadImage(imgLogica);
     //UnloadTexture(texturaAura);    
+
+    // ==============================================================
+    // ABERTURA DO SPACE SHOOTER (RODA APÓS A MEMÓRIA DO MAPA FECHAR)
+    // ==============================================================
+    if (iniciarViagemExecutavel) {
+        // Entra na pasta do Space Shooter e executa ele de lá de dentro!
+        system("cd ../SpaceShooter && start SpaceGameplayOO.exe"); 
+    }
+
     return 0;
 }
