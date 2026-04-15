@@ -14,6 +14,8 @@ Nave::Nave() {
     forcaTurbo = 50.0f;          // Ganha 50 de vel por seg
     eficienciaCombustivel = 0.0f;// Começa sem bônus de economia
     taxaConsumoBase = 10.0f;     // Gasta 10 de comb por seg padrão
+    escudoMaximo = 10; 
+    escudoAtual = escudoMaximo;
 
     // Status Iniciais de Combate
     cooldownTiro = 0.0f;
