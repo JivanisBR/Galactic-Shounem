@@ -7,6 +7,21 @@
 #include "boss.h"
 #include "Player.h"
 #include "Nave.h"
+#include <fstream>
+
+struct EventoViagem {
+    int inicioAL;
+    int fimAL;
+    bool processado = false;
+};
+
+std::vector<EventoViagem> planoMeteoros;
+std::vector<EventoViagem> planoPiratas;
+std::vector<EventoViagem> planoBosses;
+
+// 1 Ano-Luz no Mapa = 100 unidades de distância no Space Shooter (Ajuste isso depois se achar muito curto/longo)
+const int MULTIPLICADOR_AL = 300;
+
 Texture2D menui, credits, nav, mort, fire1, meteoro_tex, enemynav;
 Sound sob[5], bomb, ai, oh;
 Music background_music;
@@ -454,6 +469,68 @@ void DesenharExplosoes() {
     EndBlendMode();
 }
 
+void CarregarPlanoDeVoo() {
+    std::ifstream arquivo("viagem_data.txt");
+    
+    // Se por acaso o jogador abrir o SpaceShooter direto pelo executável sem passar pelo Mapa,
+    // o arquivo não vai existir, então o jogo roda com valores padrão pra não crashar.
+    if (!arquivo.is_open()) return; 
+
+    std::string chave;
+    // O C++ é inteligente: ele lê a primeira palavra, vê o que é, e puxa os números seguintes!
+    while (arquivo >> chave) {
+        if (chave == "PLAYER_NOME") { arquivo >> jogador->nome; }
+        else if (chave == "PLAYER_VIDA") { arquivo >> jogador->vidaAtual >> jogador->vidaMaxima; }
+        else if (chave == "PLAYER_KI") { arquivo >> jogador->kiAtual >> jogador->kiMaximo; }
+        else if (chave == "PLAYER_PDL") { arquivo >> jogador->pdlAtual >> jogador->pdlMaximo; }
+        else if (chave == "PLAYER_DINHEIRO") { arquivo >> jogador->dinheiro; }
+        
+        else if (chave == "NAVE_COMBUSTIVEL") { arquivo >> jogador->minhaNave->combustivelAtual >> jogador->minhaNave->combustivelMaximo; }
+        else if (chave == "NAVE_ESCUDO") { arquivo >> jogador->minhaNave->escudoAtual >> jogador->minhaNave->escudoMaximo; }
+        else if (chave == "NAVE_MINERIOS") { arquivo >> jogador->minhaNave->invFerro >> jogador->minhaNave->invPrata >> jogador->minhaNave->invOuro; }
+        else if (chave == "NAVE_UPGRADES") { arquivo >> jogador->minhaNave->forcaTurbo >> jogador->minhaNave->eficienciaCombustivel >> jogador->minhaNave->taxaConsumoBase; }
+        
+        else if (chave == "VIAGEM_DISTANCIA") { 
+            int distAL; arquivo >> distAL; 
+            distance_total = distAL * MULTIPLICADOR_AL;
+            distance_left = distance_total; // Reseta a distância atual
+        }
+        
+        else if (chave == "QTD_METEOROS") {
+            int qtd; arquivo >> qtd;
+            for (int i = 0; i < qtd; i++) { 
+                EventoViagem e; 
+                arquivo >> e.inicioAL >> e.fimAL; 
+                // Multiplica a distância do evento pela escala do jogo
+                e.inicioAL *= MULTIPLICADOR_AL; 
+                e.fimAL *= MULTIPLICADOR_AL;
+                planoMeteoros.push_back(e); 
+            }
+        }
+        else if (chave == "QTD_PIRATAS") {
+            int qtd; arquivo >> qtd;
+            for (int i = 0; i < qtd; i++) { 
+                EventoViagem e; 
+                arquivo >> e.inicioAL >> e.fimAL; 
+                e.inicioAL *= MULTIPLICADOR_AL;
+                e.fimAL *= MULTIPLICADOR_AL;
+                planoPiratas.push_back(e); 
+            }
+        }
+        else if (chave == "QTD_BOSSES") {
+            int qtd; arquivo >> qtd;
+            for (int i = 0; i < qtd; i++) { 
+                EventoViagem e; 
+                arquivo >> e.inicioAL >> e.fimAL; 
+                e.inicioAL *= MULTIPLICADOR_AL;
+                e.fimAL *= MULTIPLICADOR_AL;
+                planoBosses.push_back(e); 
+            }
+        }
+    }
+    arquivo.close();
+}
+
 void controle() {
     if (menu) {
         cdpause++;
@@ -602,7 +679,10 @@ void desenhar() {
     }
 
     // 3. Progresso da Viagem Real
-    if (distance_left > 0 && vida > 0) {
+    // A trava: Se o boss está ativo e não foi derrotado, a distância congela!
+    bool travarProgresso = (boss && !boss_defeated);
+
+    if (distance_left > 0 && vida > 0 && !travarProgresso) {
         // O avanço real no espaço é puramente a velocidade atual da nave
         float avanco_exato = jogador->minhaNave->velocidadeAtual * GetFrameTime() * mult;
         
@@ -616,6 +696,54 @@ void desenhar() {
         }
     }
 
+    // =================================================================
+    // --- DIRETOR DE EVENTOS ---
+    // =================================================================
+    temCinturao = false;
+    
+    bool inPirateZone = false;
+    bool inBossZone = false;
+    bool avisoMeteoro = false, avisoPirata = false, avisoBoss = false;
+
+    float distAviso = jogador->minhaNave->velocidadeAtual * 3.0f;
+    if (distAviso < 3000.0f) distAviso = 3000.0f; // Distância mínima de aviso
+
+    // Scanner de Meteoros e Piratas
+    for (const auto& m : planoMeteoros) {
+        if (distance_traveled >= m.inicioAL - distAviso && distance_traveled < m.inicioAL) avisoMeteoro = true;
+        if (distance_traveled >= m.inicioAL && distance_traveled <= m.fimAL) { temCinturao = true; }
+    }
+    for (const auto& p : planoPiratas) {
+        if (distance_traveled >= p.inicioAL - distAviso && distance_traveled < p.inicioAL) avisoPirata = true;
+        if (distance_traveled >= p.inicioAL && distance_traveled <= p.fimAL) inPirateZone = true;
+    }
+
+    // Scanner de Bosses com Trava por Índice
+    for (int i = 0; i < (int)planoBosses.size(); i++) {
+        auto& b = planoBosses[i];
+        
+        // Se está na zona, o efeito visual de Dark Zone (fade out) ativa
+        if (distance_traveled >= b.inicioAL && distance_traveled <= b.fimAL) {
+            inBossZone = true; 
+
+            // Só spawna se a zona não foi limpa
+            if (!b.processado && !boss) {
+                boss = true;
+                boss_defeated = false;
+                chefeFinal->Resetar();
+            }
+        }
+
+        // Se o Boss morreu, marca ESTA zona específica como processada
+        if (boss && boss_defeated && inBossZone) {
+            b.processado = true;
+            boss = false; // Desativa a flag de combate, mas inBossZone continua true para o visual
+        }
+        
+        // Aviso prévio
+        if (distance_traveled >= b.inicioAL - distAviso && distance_traveled < b.inicioAL) avisoBoss = true;
+    }
+
     // 1. BACKGROUND STARS (Animação Senoidal - Blindada contra bugs)
     for (auto& s : background_stars) {
         float move_amount = (world_speed_factor / (float)s.speed_delay) * mult;
@@ -623,10 +751,12 @@ void desenhar() {
 
         // Reset quando sai da tela
         if(s.position.y > 710) { 
-            s.position = {(float)GetRandomValue(0, 1200), (float)GetRandomValue(-100, -10)};
-            s.speed_delay = GetRandomValue(8, 20); 
-            s.base_size = GetRandomValue(1, 2); // Garante tamanho base pequeno
-            s.growth_range = 3;
+            if (!inBossZone) { // <--- TRAVA DO ABISMO AQUI
+                s.position = {(float)GetRandomValue(0, 1200), (float)GetRandomValue(-100, -10)};
+                s.speed_delay = GetRandomValue(8, 20); 
+                s.base_size = GetRandomValue(1, 2); 
+                s.growth_range = 3;
+            }
         }
 
         // --- NOVA ANIMAÇÃO MATEMÁTICA ---
@@ -647,15 +777,15 @@ void desenhar() {
         s.position.y += move_amount;
 
         if(s.position.y > 710) { 
-            s.position = {(float)GetRandomValue(0, 1200), (float)GetRandomValue(-150, -10)};
-            s.speed_delay = GetRandomValue(1, 7); 
-            
-            // Recalcula Base
-            s.base_size = (12 - s.speed_delay) / 2;
-            if(s.base_size < 3) s.base_size = 3;
-            
-            // Recalcula Limite
-            s.growth_range = (s.base_size > 4) ? 9 : 6;
+            if (!inBossZone) { // <--- TRAVA DO ABISMO AQUI
+                s.position = {(float)GetRandomValue(0, 1200), (float)GetRandomValue(-150, -10)};
+                s.speed_delay = GetRandomValue(1, 7); 
+                
+                s.base_size = (12 - s.speed_delay) / 2;
+                if(s.base_size < 3) s.base_size = 3;
+                
+                s.growth_range = (s.base_size > 4) ? 9 : 6;
+            }
         }
 
         // --- NOVA ANIMAÇÃO MATEMÁTICA ---
@@ -674,11 +804,13 @@ void desenhar() {
         n.position.y += move_amount;
 
         if(n.position.y > 1000) { 
-            n.position = {(float)GetRandomValue(0, 1200), (float)GetRandomValue(-500, -300)};
-            Color COLOR_ROXO = {128, 0, 128, 255};
-            std::vector<Color> nebula_colors = {BLUE, COLOR_ROXO, RED, GREEN, YELLOW, WHITE};
-            n.base_color = nebula_colors[GetRandomValue(0, nebula_colors.size() - 1)];
-            GenerateNebulaShape(n, PARTICLES_PER_NEBULA, STAR_PARTICLE_COUNT);
+            if (!inBossZone) { // <--- TRAVA DO ABISMO AQUI
+                n.position = {(float)GetRandomValue(0, 1200), (float)GetRandomValue(-500, -300)};
+                Color COLOR_ROXO = {128, 0, 128, 255};
+                std::vector<Color> nebula_colors = {BLUE, COLOR_ROXO, RED, GREEN, YELLOW, WHITE};
+                n.base_color = nebula_colors[GetRandomValue(0, nebula_colors.size() - 1)];
+                GenerateNebulaShape(n, PARTICLES_PER_NEBULA, STAR_PARTICLE_COUNT);
+            }
         }
         
         // Animação das partículas internas (SENOIDAL)
@@ -702,7 +834,7 @@ void desenhar() {
         DrawRectangle(s.position.x - s.size, s.position.y, s.size * 2 + 1, 1, {128, 128, 128, 255});
         DrawRectangle(s.position.x, s.position.y - s.size, 1, s.size * 2 + 1, {128, 128, 128, 255});
     }
-    
+        
     for (const auto& n : nebulas) {
         for (int i=0; i < n.particles.size(); ++i){
             const auto& p = n.particles[i];
@@ -711,7 +843,7 @@ void desenhar() {
             else { DrawEllipse(particle_pos.x, particle_pos.y, p.width/2, p.height/2, p.color); }
         }
     }
-    
+        
     for (const auto& s : foreground_stars) { DrawStarShape(s.position, s.size, WHITE); }
     // --- FIM DO CÓDIGO DO FUNDO ---
 
@@ -1340,10 +1472,51 @@ void desenhar() {
         exp_y = nave_y;
         hitbox1y = nave_y + 40; hitbox2y = nave_y + 10;
 
-        // --- GERENCIAMENTO DO BOSS ---
-        if (distance_traveled >= (distance_total*0.75f) && !winn && !boss_defeated){
-            boss = true;
+        // =================================================================
+        // --- TEXTOS DE AVISOS NA TELA ---
+        // =================================================================
+        if (avisoMeteoro && ((int)(GetTime() * 4) % 2 == 0)) {
+            DrawText("AVISO: CINTURAO DE ASTEROIDES A FRENTE! REDUZA A VELOCIDADE!", 150, 160, 25, RED);
         }
+        if (avisoPirata && ((int)(GetTime() * 4) % 2 == 0)) {
+            DrawText("ALERTA: NAVE PIRATA ANALISANDO PADRAO DE VOO!", 150, 200, 25, PURPLE);
+        }
+        if (avisoBoss && ((int)(GetTime() * 4) % 2 == 0)) {
+            DrawText("PERIGO CRITICO: ENTRANDO EM ZONA ESCURA (ABISMO)", 150, 240, 25, DARKGRAY);
+        }
+
+        // =================================================================
+        // --- ATIVADORES DE COMBATE ---
+        // =================================================================
+        // 1. GATILHO DO BOSS
+        static bool bossResetadoNestaZona = false;
+        if (inBossZone) {
+            if (!bossResetadoNestaZona) {
+                boss = true;
+                boss_defeated = false;
+                chefeFinal->Resetar();
+                bossResetadoNestaZona = true;
+            }
+        } else {
+            bossResetadoNestaZona = false; // Permite spawnar o próximo boss da viagem depois
+            boss = false;
+        }
+
+        // 2. GATILHO DO PIRATA
+        static bool pirataResetadoNestaZona = false;
+        if (inPirateZone) {
+            if (!pirataResetadoNestaZona) {
+                enemy = true;
+                enemylife = 5;
+                enemy_defeated = false;
+                Color paletaInimigos[] = {WHITE, RED, GREEN, BLUE, YELLOW, ORANGE, PURPLE};
+                enemyColor = paletaInimigos[GetRandomValue(0, 6)]; 
+                pirataResetadoNestaZona = true;
+            }
+        } else {
+            pirataResetadoNestaZona = false; // Se tiver outra zona roxa, spawna outro!
+        }
+
         if (boss && !winn) {
             if (chefeFinal->vida > 0) {
                 bool tocaSomDano = false;
@@ -1366,13 +1539,6 @@ void desenhar() {
                     AdicionarExplosao({(float)chefeFinal->x + GetRandomValue(30, 270), (float)chefeFinal->y + GetRandomValue(30, 270)}, MONSTER);
                 }
             }
-        }
-
-        // INIMIGO NORMAL
-        if(distance_traveled >= (distance_total*0.5f) && !enemy && !enemy_defeated && enemylife > 0){
-            enemy = true;
-            Color paletaInimigos[] = {WHITE, RED, GREEN, BLUE, YELLOW, ORANGE, PURPLE};
-            enemyColor = paletaInimigos[GetRandomValue(0, 6)]; 
         }
 
         // TIRO DO INIMIGO NORMAL 
@@ -1599,13 +1765,11 @@ int main() {
     chefeFinal = new Boss();
     UnloadImage(imgExp);
 
+    // --- PUXAMENTO DOS DADOS DO MAPA ESTELAR ---
     chefeFinal = new Boss();
-    jogador = new Player("Goku"); // Cria o player e a nave dele automaticamente
-    
-    // Simula o resultado aleatório do futuro minigame de lançamento (ex: 80 a 200 de vel inicial)
-    jogador->minhaNave->velocidadeAtual = (float)GetRandomValue(10, 100);
-
-    IniciarCinturao();
+    jogador = new Player("Piloto"); 
+    CarregarPlanoDeVoo(); 
+    jogador->minhaNave->velocidadeAtual = 50.0f;
 
     // --- INICIALIZAÇÃO DAS VARIÁVEIS ---
     exp_x = nave_x; exp_y = nave_y; death_x = nave_x - 30; death_y = nave_y + 10; fire_x = nave_x + 30;
