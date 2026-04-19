@@ -13,6 +13,10 @@ struct EventoViagem {
     int inicioAL;
     int fimAL;
     bool processado = false;
+    float tempoRandomBoss;
+    int framesNoEscuro = 0;
+    int framesParaAtacar = 0;
+    bool calculouTempo = false;
 };
 
 std::vector<EventoViagem> planoMeteoros;
@@ -28,24 +32,14 @@ Music background_music;
 
 float mult = 1.0f;
 
-int distance_total = (GetRandomValue(100,200)*1000);
-int distance_traveled = 0;
-int distance_left = distance_total;
+float distance_total = 0.0f; // Será preenchido pelo arquivo txt
+float distance_traveled = 0.0f;
+float distance_left = 0.0f;
 
 // --- EVENTO CINTURÃO DE ASTEROIDES ---
 bool temCinturao = false;
-int inicioCinturao = 0;
-int fimCinturao = 0;
-int densidadeCinturao = 0;
-void IniciarCinturao() {
-    temCinturao = (GetRandomValue(0, 1) == 1); 
-    if (temCinturao) {
-        inicioCinturao = distance_total * GetRandomValue(20, 50) / 100.0f; 
-        fimCinturao = inicioCinturao + GetRandomValue(5000, 15000); 
-        // Agora a densidade é exatamente a quantidade máxima simultânea na tela
-        densidadeCinturao = GetRandomValue(5, 10); 
-    }
-}
+float timerZonaSegura = 0.0f;
+bool estavaNoCinturao = false;
 
 Boss* chefeFinal = nullptr; 
 bool boss_defeated = false;
@@ -524,6 +518,7 @@ void CarregarPlanoDeVoo() {
                 arquivo >> e.inicioAL >> e.fimAL; 
                 e.inicioAL *= MULTIPLICADOR_AL;
                 e.fimAL *= MULTIPLICADOR_AL;
+                e.tempoRandomBoss = (float)GetRandomValue(5, 10); // Sorteia o tempo de "chegada" do boss
                 planoBosses.push_back(e); 
             }
         }
@@ -606,7 +601,7 @@ void controle() {
         if (nave_x > 1115) nave_x = 1115;
         if (nave_x < -10) nave_x = -10;
         if (nave_y > 600) nave_y = 600;
-        if (nave_y < 300) nave_y = 300;
+        if (nave_y < 20) nave_y = 20;
 
         exp_x = nave_x;
         hitbox1x = nave_x + 10; hitbox2x = nave_x + 38;
@@ -651,17 +646,11 @@ void desenhar() {
         if (creds) {
             DrawTexture(credits, 0, 0, WHITE);
         }
-    } else {
+    } 
+    else {
         ClearBackground(BLACK);
 
-        // O relógio do iFrame agora roda independente da nave estar viajando ou parada no Boss
-        if (jogador->minhaNave->iFrame > 0.0f) {
-            jogador->minhaNave->iFrame -= GetFrameTime();
-        }
-        
-        // --- ATUALIZAÇÃO E DESENHO DO FUNDO DE ESTRELAS ---
-
-    // --- CONTROLE MESTRE DE VELOCIDADE E FÍSICA ---
+        // --- CONTROLE MESTRE DE VELOCIDADE E FÍSICA ---
     bool turbo_on = IsKeyDown(KEY_K);
     bool freio_on = IsKeyDown(KEY_L);
 
@@ -684,7 +673,7 @@ void desenhar() {
 
     if (distance_left > 0 && vida > 0 && !travarProgresso) {
         // O avanço real no espaço é puramente a velocidade atual da nave
-        float avanco_exato = jogador->minhaNave->velocidadeAtual * GetFrameTime() * mult;
+        float avanco_exato = (jogador->minhaNave->velocidadeAtual * GetFrameTime()) * mult;
         
         distance_traveled += (int)avanco_exato;
         distance_left -= (int)avanco_exato;
@@ -718,29 +707,45 @@ void desenhar() {
         if (distance_traveled >= p.inicioAL && distance_traveled <= p.fimAL) inPirateZone = true;
     }
 
-    // Scanner de Bosses com Trava por Índice
+    // 3. Scanner de Bosses com Cronômetro Isolado
     for (int i = 0; i < (int)planoBosses.size(); i++) {
         auto& b = planoBosses[i];
         
-        // Se está na zona, o efeito visual de Dark Zone (fade out) ativa
+        // --- DENTRO DA DARK ZONE ---
         if (distance_traveled >= b.inicioAL && distance_traveled <= b.fimAL) {
             inBossZone = true; 
 
-            // Só spawna se a zona não foi limpa
             if (!b.processado && !boss) {
-                boss = true;
-                boss_defeated = false;
-                chefeFinal->Resetar();
+                // Sorteia no primeiro frame exato que entra na zona
+                if (!b.calculouTempo) {
+                    b.framesParaAtacar = GetRandomValue(300, 900); // 300 = 5s, 900 = 15s
+                    b.framesNoEscuro = 0;
+                    b.calculouTempo = true;
+                }
+
+                b.framesNoEscuro++; 
+                
+                // O Boss SÓ nasce se a cota exata de frames for batida
+                if (b.framesNoEscuro >= b.framesParaAtacar) {
+                    boss = true;
+                    boss_defeated = false;
+                    chefeFinal->Resetar();
+                }
+            }
+        } 
+        // --- SAIU DA DARK ZONE (Fugiu a tempo) ---
+        else if (distance_traveled > b.fimAL && !b.processado) {
+            if (!boss) { 
+                b.processado = true; 
             }
         }
 
-        // Se o Boss morreu, marca ESTA zona específica como processada
+        // --- BOSS DERROTADO ---
         if (boss && boss_defeated && inBossZone) {
             b.processado = true;
-            boss = false; // Desativa a flag de combate, mas inBossZone continua true para o visual
+            boss = false; 
         }
         
-        // Aviso prévio
         if (distance_traveled >= b.inicioAL - distAviso && distance_traveled < b.inicioAL) avisoBoss = true;
     }
 
@@ -890,9 +895,6 @@ void desenhar() {
         EndBlendMode();
     }
 
-        DrawText("Points: ", 520, 50, 20, WHITE);
-        DrawText("Move: WASD/ARROW KEYS", 20, 30, 20, WHITE);
-        DrawText("Shoot: ESPACE", 20, 50, 20, WHITE);
         DrawText("Pause: P", 20, 70, 20, WHITE);
         DrawText("Turbo: K", 20, 90, 20, WHITE);
         DrawText("Break: L", 20, 110, 20, WHITE);
@@ -904,7 +906,7 @@ void desenhar() {
         if (jogador->minhaNave->escudoAtual <= 0) vida = 0;
 
         char distance_str[20];
-        sprintf(distance_str, "%d       ", distance_left);
+        sprintf(distance_str, "%.0f       ", distance_left);
         if(distance_left>0){ 
             DrawText("Distance Left: ", 900, 30, 20, WHITE);
             DrawText(distance_str, 1050, 30, 20, WHITE);
@@ -1134,8 +1136,11 @@ void desenhar() {
             // Define a direção do espelhamento (1 = Normal, -1 = Espelhado)
             float direcao_textura = (estado_inclinacao < 0.0f) ? -1.0f : 1.0f;
 
+            // O relógio do iFrame agora roda independente da nave estar viajando ou parada no Boss
+            if (jogador->minhaNave->iFrame > 0.0f) {
+                jogador->minhaNave->iFrame -= GetFrameTime();
+            }
             
-
             // Recorte do SpriteSheet
             Rectangle sourceRec = { (float)(frame_atual * 100), 0.0f, 100.0f * direcao_textura, 100.0f };
             Vector2 posNave = { (float)nave_x, (float)nave_y };
@@ -1308,34 +1313,98 @@ void desenhar() {
         DrawText(TextFormat("Ag: %d", jogador->minhaNave->invPrata), 1050, 630, 20, LIGHTGRAY);
         DrawText(TextFormat("Au: %d", jogador->minhaNave->invOuro), 1050, 660, 20, GOLD);
 
-        // 1. O Alarme do Cinturão (Avisa 3 segundos antes do impacto real, não importa a velocidade)
-        float distanciaAviso = jogador->minhaNave->velocidadeAtual * 3.0f;
-        if (distanciaAviso < 3000.0f) distanciaAviso = 3000.0f; // Distância mínima de segurança
+        // --- BARRA DE PROGRESSO DA VIAGEM (HUD) ---
+    if (distance_total > 0.0f) {
+        float startX = 200.0f;
+        float endX = 800.0f;
+        float barY = 40.0f; // Altura no topo da tela
+        float barWidth = endX - startX;
 
-        if (temCinturao && distance_traveled >= inicioCinturao - distanciaAviso && distance_traveled < inicioCinturao) {
-            if ((int)(GetTime() * 4) % 2 == 0) { 
-                DrawText("AVISO: CINTURAO DE ASTEROIDES A FRENTE! REDUZA A VELOCIDADE!", 150, 200, 25, RED);
-            }
+        // 1. Fundo da Barra (Cinza vazio)
+        DrawLineEx({startX, barY}, {endX, barY}, 6.0f, Fade(GRAY, 0.3f));
+
+        // 2. Marcações de Eventos na Barra (Excelente para Debug e Game Feel)
+        auto DesenharTrechoBarra = [&](float inicio, float fim, Color cor) {
+            float x1 = startX + (barWidth * (inicio / distance_total));
+            float x2 = startX + (barWidth * (fim / distance_total));
+            
+            // Travas de segurança para não desenhar fora da barra
+            if (x1 < startX) x1 = startX;
+            if (x2 > endX) x2 = endX;
+            
+            if (x1 < x2) DrawLineEx({x1, barY}, {x2, barY}, 8.0f, Fade(cor, 0.7f));
+        };
+
+        // Pinta os trechos correspondentes de cada evento
+        for (const auto& m : planoMeteoros) DesenharTrechoBarra(m.inicioAL, m.fimAL, RED);
+        for (const auto& p : planoPiratas) DesenharTrechoBarra(p.inicioAL, p.fimAL, PURPLE);
+        for (const auto& b : planoBosses) DesenharTrechoBarra(b.inicioAL, b.fimAL, BLACK); 
+
+        // 3. Progresso Concluído (Linha Verde)
+        float pct = distance_traveled / distance_total;
+        if (pct < 0.0f) pct = 0.0f; 
+        if (pct > 1.0f) pct = 1.0f;
+        
+        float playerX = startX + (barWidth * pct);
+        DrawLineEx({startX, barY}, {playerX, barY}, 6.0f, GREEN);
+
+        // 4. Bolinha do Jogador
+        DrawCircle((int)playerX, (int)barY, 8.0f, WHITE);
+        DrawCircleLines((int)playerX, (int)barY, 10.0f, GREEN);
+
+        // 5. Textos Laterais
+        DrawText("ORIGEM", (int)startX - 60, (int)barY - 5, 10, LIGHTGRAY);
+        DrawText("DESTINO", (int)endX + 15, (int)barY - 5, 10, LIGHTGRAY);
+    }
+
+        // AVISOS DO RADAR 
+        
+        float avisoY = 60.0f; // Altura fixa: 40 da barra + 20 de margem
+        int fontSize = 15; 
+
+        if (avisoMeteoro) {
+            const char* txt = "CINTURAO DE ASTEROIDES A FRENTE: REDUZA A VELOCIDADE!";
+            int txtW = MeasureText(txt, fontSize);
+            DrawText(txt, (GetScreenWidth() / 2) - (txtW / 2), avisoY, fontSize, RED);
+        } 
+        else if (avisoPirata) {
+            const char* txt = "NAVE INIMIGA ANALISANDO PADRÃO DE VOO!";
+            int txtW = MeasureText(txt, fontSize);
+            DrawText(txt, (GetScreenWidth() / 2) - (txtW / 2), avisoY, fontSize, PURPLE);
+        } 
+        else if (avisoBoss) {
+            const char* txt = "ENTRANDO NO ABISMO GALÁTICO!";
+            int txtW = MeasureText(txt, fontSize);
+            DrawText(txt, (GetScreenWidth() / 2) - (txtW / 2), avisoY, fontSize, DARKGRAY);
+        } 
+        else if (timerZonaSegura > 0.0f) {
+            const char* txt = "ZONA SEGURA: PODE ACELERAR!";
+            int txtW = MeasureText(txt, fontSize);
+            DrawText(txt, (GetScreenWidth() / 2) - (txtW / 2), avisoY, fontSize, GREEN);
         }
 
-        // 1.5. Aviso de Zona Segura (Só avisa se acabou a distância E sumiram as pedras)
+        // 1.5. Aviso de Zona Segura 
+        estavaNoCinturao = false;
+        timerZonaSegura = 0.0f;
         bool semMeteoros = true;
         for (auto& m : meteoros) if (m.ativo) semMeteoros = false;
 
-        if (temCinturao && distance_traveled >= fimCinturao && semMeteoros && distance_traveled < fimCinturao + 8000) {
-            if ((int)(GetTime() * 2) % 2 == 0) {
-                DrawText("ZONA SEGURA! PODE ACELERAR!", 400, 200, 25, GREEN);
-            }
+        if (temCinturao) estavaNoCinturao = true;
+        if (!temCinturao && estavaNoCinturao && semMeteoros) {
+            timerZonaSegura = 3.0f; // Avisa por 3 segundos
+            estavaNoCinturao = false;
         }
 
-        // 2. Lógica de Máximo de Meteoros (Cinturão OU Velocidade Baixa)
-        bool dentroDoCinturao = (temCinturao && distance_traveled >= inicioCinturao && distance_traveled <= fimCinturao);
+        // 2. Lógica de Máximo de Meteoros (Cinturão VERDADEIRO)
         bool velocidadeBaixa = (jogador->minhaNave->velocidadeAtual <= 500.0f);
-        
         int limiteMeteoros = 0;
+        
         if (!winn && !boss) {
-            if (dentroDoCinturao) limiteMeteoros = densidadeCinturao; // Ex: 8 ao mesmo tempo
-            else if (velocidadeBaixa) limiteMeteoros = 2; // Farm tranquilo: 2 ao mesmo tempo
+            if (temCinturao) {
+                limiteMeteoros = 10; // 15 METEOROS AO MESMO TEMPO NA TELA!
+            } else if (velocidadeBaixa) {
+                limiteMeteoros = 2; // Farm tranquilo
+            }
         }
 
         // 2.5 Conta meteoros e checa se já tem um de emergência na tela
@@ -1420,7 +1489,7 @@ void desenhar() {
                 
                 if (jogador->minhaNave->iFrame <= 0.0f) {
                     jogador->minhaNave->escudoAtual--;
-                    jogador->minhaNave->iFrame = 3.0f;
+                    jogador->minhaNave->iFrame = 2.0f;
                     PlaySound(bomb);
                 }
 
@@ -1473,36 +1542,10 @@ void desenhar() {
         hitbox1y = nave_y + 40; hitbox2y = nave_y + 10;
 
         // =================================================================
-        // --- TEXTOS DE AVISOS NA TELA ---
-        // =================================================================
-        if (avisoMeteoro && ((int)(GetTime() * 4) % 2 == 0)) {
-            DrawText("AVISO: CINTURAO DE ASTEROIDES A FRENTE! REDUZA A VELOCIDADE!", 150, 160, 25, RED);
-        }
-        if (avisoPirata && ((int)(GetTime() * 4) % 2 == 0)) {
-            DrawText("ALERTA: NAVE PIRATA ANALISANDO PADRAO DE VOO!", 150, 200, 25, PURPLE);
-        }
-        if (avisoBoss && ((int)(GetTime() * 4) % 2 == 0)) {
-            DrawText("PERIGO CRITICO: ENTRANDO EM ZONA ESCURA (ABISMO)", 150, 240, 25, DARKGRAY);
-        }
-
-        // =================================================================
         // --- ATIVADORES DE COMBATE ---
         // =================================================================
-        // 1. GATILHO DO BOSS
-        static bool bossResetadoNestaZona = false;
-        if (inBossZone) {
-            if (!bossResetadoNestaZona) {
-                boss = true;
-                boss_defeated = false;
-                chefeFinal->Resetar();
-                bossResetadoNestaZona = true;
-            }
-        } else {
-            bossResetadoNestaZona = false; // Permite spawnar o próximo boss da viagem depois
-            boss = false;
-        }
 
-        // 2. GATILHO DO PIRATA
+        // 1. GATILHO DO PIRATA
         static bool pirataResetadoNestaZona = false;
         if (inPirateZone) {
             if (!pirataResetadoNestaZona) {
@@ -1669,7 +1712,6 @@ void desenhar() {
                 boss_defeated = false;
                 jogador->minhaNave->combustivelAtual = jogador->minhaNave->combustivelMaximo;
                 //jogador->minhaNave->velocidadeAtual = (float)GetRandomValue(80, 2500); // Sorteia o lançamento de novo
-                IniciarCinturao();
                 if (boss) chefeFinal->Resetar(); 
             }
         }
