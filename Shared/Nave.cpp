@@ -19,6 +19,7 @@ Nave::Nave() {
 
     // Status Iniciais de Combate
     cooldownTiro = 0.0f;
+    iFrame = 0.0f;
 
     // Porão vazio
     invFerro = 0;
