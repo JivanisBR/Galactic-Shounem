@@ -669,19 +669,80 @@ void desenhar() {
 
     // 3. Progresso da Viagem Real
     // A trava: Se o boss está ativo e não foi derrotado, a distância congela!
-    bool travarProgresso = (boss && !boss_defeated);
+    // =================================================================
+    // --- LÓGICA DE BLOQUEIO DO BOSS E RECOMPENSAS ---
+    // =================================================================
+    static float timerLiberarNave = 0.0f;
+    static bool dropouGasol = false;
+    bool bloqueioBoss = false;
 
-    if (distance_left > 0 && vida > 0 && !travarProgresso) {
-        // O avanço real no espaço é puramente a velocidade atual da nave
-        float avanco_exato = (jogador->minhaNave->velocidadeAtual * GetFrameTime()) * mult;
-        
-        distance_traveled += (int)avanco_exato;
-        distance_left -= (int)avanco_exato;
-        
-        // Trava para não passar do limite e negativar
-        if (distance_left < 0) {
-            distance_left = 0;
-            distance_traveled = distance_total;
+    if (boss) {
+        // ATENÇÃO: Substitua "vidaAtual" caso a variável de HP do seu chefe tenha outro nome!
+        if (chefeFinal->vida > 0) {
+            bloqueioBoss = true;
+            timerLiberarNave = 0.0f;
+            dropouGasol = false;
+        } 
+        else {
+            // O Boss explodiu (HP <= 0), mas as peças ainda estão caindo...
+            
+            // 1. Drop de Combustível (Roda uma única vez)
+            if (!dropouGasol) {
+                for(int j=0; j<5; j++) { // Solta 5 orbs de gasol
+                    Drop d; 
+                    d.pos = {(float)enemyx+30, (float)enemyy+20};
+                    float ang = GetRandomValue(180, 360) * DEG2RAD; 
+                    float spd = GetRandomValue(30, 60) / 10.0f; 
+                    d.vel = { cosf(ang) * spd, sinf(ang) * spd };
+                    d.isCombustivel = true; // <--- É COMBUSTÍVEL
+                    d.valor = 15; // Cada bolha recupera 15 de combustível
+                    drops.push_back(d);
+                }
+                dropouGasol = true;
+            }
+
+            // 2. Timer de Liberação da Nave
+            timerLiberarNave += GetFrameTime();
+            
+            if (timerLiberarNave < 3.0f) {
+                bloqueioBoss = true; // Segura a nave por mais 3 segundos de suspense
+            } else {
+                bloqueioBoss = false; // LIBERADO! Pode acelerar e a distância volta a cair.
+            }
+        }
+    } else {
+        timerLiberarNave = 0.0f;
+        dropouGasol = false;
+    }
+
+    // A trava da distância da viagem agora obedece o novo bloqueio inteligente
+    bool travarProgresso = bloqueioBoss;
+
+    if (!bloqueioBoss) {
+        if (distance_left > 0 && vida > 0 && !travarProgresso) {
+            // O avanço real no espaço é puramente a velocidade atual da nave
+            float avanco_exato = (jogador->minhaNave->velocidadeAtual * GetFrameTime()) * mult;
+            
+            distance_traveled += (int)avanco_exato;
+            distance_left -= (int)avanco_exato;
+            
+            // Trava para não passar do limite e negativar
+            if (distance_left < 0) {
+                distance_left = 0;
+                distance_traveled = distance_total;
+            }
+        }
+    }
+
+    // 2. DESACELERAÇÃO FORÇADA PELO BOSS:
+    if (bloqueioBoss) {
+        if (jogador->minhaNave->velocidadeAtual > 50.0f) {
+            // Cai 1km/s por frame, dando aquela sensação de estar sendo freado brutalmente
+            jogador->minhaNave->velocidadeAtual -= 1.0f; 
+            
+            if (jogador->minhaNave->velocidadeAtual < 50.0f) {
+                jogador->minhaNave->velocidadeAtual = 50.0f; // Trava o piso em 50km/s
+            }
         }
     }
 
@@ -756,12 +817,10 @@ void desenhar() {
 
         // Reset quando sai da tela
         if(s.position.y > 710) { 
-            if (!inBossZone) { // <--- TRAVA DO ABISMO AQUI
-                s.position = {(float)GetRandomValue(0, 1200), (float)GetRandomValue(-100, -10)};
-                s.speed_delay = GetRandomValue(8, 20); 
-                s.base_size = GetRandomValue(1, 2); 
-                s.growth_range = 3;
-            }
+            s.position = {(float)GetRandomValue(0, 1200), (float)GetRandomValue(-100, -10)};
+            s.speed_delay = GetRandomValue(8, 20); 
+            s.base_size = GetRandomValue(1, 2); 
+            s.growth_range = 3;
         }
 
         // --- NOVA ANIMAÇÃO MATEMÁTICA ---
