@@ -54,20 +54,29 @@ Para testar uma Seed, basta copiar o conteúdo dentro do arquivo da Seed, e cola
 
 
 ## ​🛠️ 3. Funções Essenciais da Raylib Usadas
+
 ​Nós usamos a engine Raylib (C++). Se precisar mexer na parte visual ou de controles, estas são as funções que mais utilizamos:
 
 ​DrawTexturePro(): Desenha e manipula recortes de uma imagem maior (SpriteSheet). Usamos muito para animar a nave do player e as articulações do boss. Aceita escala e rotação.
+
 ​BeginBlendMode(BLEND_ADDITIVE) e EndBlendMode(): O segredo dos nossos gráficos! Tudo que precisa brilhar como laser, luzes neon ou fogo dos propulsores fica entre essas duas funções.
+
 ​IsKeyDown(KEY_...): Checa se a tecla está sendo segurada (usado para movimentação e turbo).
+
 ​IsKeyPressed(KEY_...): Checa se a tecla foi pressionada uma vez (usado para menus, reset ou disparos específicos).
-​GetRandomValue(min, max): Usado exaustivamente na IA e na física de explosão para criar caos e imprevisibilidade.
+
+​GetRandomValue(min, max): Usado exaustivamente na IA e na física de explosão para criar caos e imprevisibilidade procedural.
 
 
 ## ​💻 4. Como Compilar
 
-​Se for testar localmente via terminal, usamos o compilador G++ incluindo todos os arquivos .cpp de uma vez. O comando padrão (ajuste os caminhos da Raylib conforme o seu PC) é:
-g++ *.cpp -o SpaceGameplayOO.exe -I C:\raylib\raylib-5.5_win64_mingw-w64\include -L C:\raylib\raylib-5.5_win64_mingw-w64\lib -lraylib -lopengl32 -lgdi32 -lwinmm
+​Se for testar localmente via terminal, usamos o compilador G++ incluindo todos os arquivos .cpp de uma vez. O comando padrão, feito no terminal das pastas específicas dentro da pasta Galactic Shounen é:
 
+Para compilar o Mapa:
+g++ *.cpp ../Shared/Player.cpp ../Shared/Nave.cpp -o MapaEstelar.exe -I ../Shared -I C:\raylib\raylib-5.5_win64_mingw-w64\include -L C:\raylib\raylib-5.5_win64_mingw-w64\lib -lraylib -lopengl32 -lgdi32 -lwinmm
+
+Para compilar o SpaceShooter:
+g++ *.cpp ../Shared/Player.cpp ../Shared/Nave.cpp -o SpaceGameplayOO.exe -I ../Shared -I C:\raylib\raylib-5.5_win64_mingw-w64\include -L C:\raylib\raylib-5.5_win64_mingw-w64\lib -lraylib -lopengl32 -lgdi32 -lwinmm
 
 
 ## 📚 5. Guia Rápido de Funções Raylib (Cheat Sheet)
