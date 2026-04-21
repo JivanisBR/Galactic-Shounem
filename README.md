@@ -30,17 +30,26 @@ UpgradeAstral (árvore de skills):
 BeatEmUp:
 Será o motor principal do jogo, toda a mecânica de luta e movimentação do player e inimigos estará aqui futuramente.
 
+
 ## ​⚙️ 2. Como Fazer Ajustes Finos ("Tweaks")
 ​Muitos valores no jogo estão abertos para balanceamento e polimento.
+
 Dica de ouro: Dê Ctrl+F na palavra "ajuste" pelo código. Você encontrará comentários indicando onde alterar cadência de tiro, gravidade das partículas e velocidades.
+
 ​Velocidade e Tempo: A variável global mult (baseada no GetFrameTime()) é o que mantém o jogo fluído independente dos frames. Qualquer coisa que se mova precisa ser multiplicada por mult ou GetFrameTime().
+
 ​Player Hitbox: A hitbox da nave não é do tamanho da imagem inteira. As variáveis death_x e death_y definem o miolo da nave.
+
 ​Sistema de Loot: Está na função SpawnLoot() no SpaceGameplayOO.cpp. Ali dá para alterar as chances de vir Ferro, Prata ou Ouro e o valor que cada meteoro dropa.
+
 
 ## ​⚙️ 2.5 Como Fazer Ajustes Baseados em Seeds Específicas ("Data-Driven Tweaks")
 Na pasta Seeds de Teste haverá arquivos .txt que armazenam dados de rotas de gameplay(cenários) únicos e editáveis, para repetir alguma rota que ocorreu algum bug, ou para testar o level design e gamefeel geral daquela rota específica. 
+
 É importante usar esta pasta para salvar rotas onde bugs de level aconteceram, e/ou para salvar rotas boas para testes com usuários. 
+
 Para salvar uma Seed, deve copiar o arquivo viagem_data.txt da pasta SpaceShooter, e colar dentro da pasta Seeds de Teste, renomeando com a descrição da Seed. (ATENÇÃO: O arquivo salva apenas a última viagem gerada pelo mapa estelar). 
+
 Para testar uma Seed, basta copiar o conteúdo dentro do arquivo da Seed, e colar dentro do arquivo viagem_data.txt da pasta SpaceShooter, e abrir o executável do SpaceGameplay.
 
 
