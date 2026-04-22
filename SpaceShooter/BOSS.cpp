@@ -47,7 +47,7 @@ Boss::~Boss() {
 void Boss::Resetar() {
     y = -600; vida = 50;
     mortoFlag = false; timerMorte = 0.0f;
-    cadenciaTiro = 0.5f;
+    cadenciaTiro = GetRandomValue(0.5f,1.0f);
     deathSoundDelay = 0; 
     bombCount = 0;
     pecasDestruidas.clear();
@@ -66,17 +66,20 @@ void Boss::AtualizarEDesenhar() {
     if (iaAtiva) {
         if (raiva) {
             padraoAtual = 6; 
-        } else {
+        } 
+        else {
             if (padraoAtual == 6) {
                 padraoAtual = 1; 
                 timerIA = (float)GetRandomValue(20, 40) / 10.0f;
-            } else if (padraoAtual == 1) {
+            } 
+            else if (padraoAtual == 1) {
                 timerIA -= dt;
                 if (timerIA <= 0.0f) {
                     padraoAtual = GetRandomValue(2, 5); 
                     passoPadrao = 0; timerPadrao = cadenciaTiro; loopConcluido = false;
                 }
-            } else if (padraoAtual >= 2 && padraoAtual <= 5) {
+            } 
+            else if (padraoAtual >= 2 && padraoAtual <= 5) {
                 if (loopConcluido) {
                     padraoAtual = 1; 
                     timerIA = (float)GetRandomValue(20, 40) / 10.0f; 

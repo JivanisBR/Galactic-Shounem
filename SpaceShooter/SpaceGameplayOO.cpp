@@ -7,6 +7,7 @@
 #include "boss.h"
 #include "Player.h"
 #include "Nave.h"
+#include "explosao.h"
 #include <fstream>
 
 struct EventoViagem {
@@ -26,7 +27,7 @@ std::vector<EventoViagem> planoBosses;
 // 1 Ano-Luz no Mapa = 100 unidades de distância no Space Shooter (Ajuste isso depois se achar muito curto/longo)
 const int MULTIPLICADOR_AL = 300;
 
-Texture2D menui, credits, nav, mort, fire1, meteoro_tex, enemynav;
+Texture2D menui, credits, nav, mort, fire1, meteoro_tex, enemynav, texParticula;
 Sound sob[5], bomb, ai, oh;
 Music background_music;
 
@@ -54,44 +55,8 @@ struct Drop {
 // A lista e os inventários continuam iguais:
 std::vector<Drop> drops;
 Player* jogador = nullptr;
+GerenciadorDeExplosoes* fxExplosoes = nullptr;
 
-
-
-// --- SISTEMA DE EXPLOSÕES (Início) ---
-enum ExplosionType { SMALL_SHIP, LARGE_SHIP, METEOR, MONSTER };
-
-struct Particula {
-    Vector2 position;
-    Vector2 velocity;
-    float size;
-    float lifePct;
-    float decayRate;
-    Color color;
-    bool isAdditive; 
-};
-
-struct Explosion {
-    std::vector<Particula> particles;
-    bool active;
-    ExplosionType currentType;
-};
-
-// Lista Global de Explosões
-std::vector<Explosion> explosoesAtivas;
-Texture2D texParticula; // Textura global
-
-// Funções de Cor
-Color GetFireColor(float lifePct) {
-    if (lifePct > 0.7f) return ColorLerp(YELLOW, WHITE, (lifePct - 0.7f) * 3.3f);
-    if (lifePct > 0.4f) return ColorLerp(ORANGE, YELLOW, (lifePct - 0.4f) * 3.3f);
-    return ColorLerp(DARKGRAY, ORANGE, lifePct * 2.5f);
-}
-
-Color GetBloodColor(Color base, float lifePct) {
-    float alphaBoost = (lifePct > 0.2f) ? 1.0f : lifePct * 5.0f;
-    return ColorAlpha(base, alphaBoost);
-}
-// --- SISTEMA DE EXPLOSÕES (Fim das Estruturas) ---
 
 //----------------------------------------------------------------------------------
 // ESTRUTURAS DE DADOS PARA O FUNDO DE ESTRELAS
@@ -325,142 +290,6 @@ void SpawnLoot(Vector2 centroExplosao) {
         d.isCombustivel = false;
         drops.push_back(d);
     }
-}
-
-// --- LÓGICA DAS EXPLOSÕES ---
-
-void AdicionarExplosao(Vector2 p, ExplosionType type) {
-    Explosion novaEx = {};
-    novaEx.active = true;
-    novaEx.currentType = type;
-    novaEx.particles.clear();
-
-    int count = 150;
-    float speedMin = 15.0f, speedMax = 55.0f;
-    float sizeMin = 10.0f, sizeMax = 65.0f;
-    Color bloodBase = GREEN;
-
-    // Configurações por tipo
-    if (type == LARGE_SHIP) {
-        count = 300;
-        speedMin = 10.0f; speedMax = 90.0f; 
-        sizeMin = 10.0f; sizeMax = 30.0f;
-    } else if (type == METEOR) {
-        count = 50;
-        speedMin = 10.0f; speedMax = 60.0f;
-    }
-
-    // Gerar Partículas Principais (Fogo/Energia)
-    for (int i = 0; i < count; i++) {
-        float angle = GetRandomValue(0, 360) * DEG2RAD;
-        float speed = GetRandomValue((int)(speedMin * 10), (int)(speedMax * 10)) / 10.0f;
-        
-        Particula part;
-        part.position = { p.x + GetRandomValue(-10, 10), p.y + GetRandomValue(-10, 10) };
-        part.velocity = { cosf(angle) * speed, sinf(angle) * speed };
-        part.lifePct = 1.0f;
-        part.decayRate = (type == LARGE_SHIP) ? GetRandomValue(10, 40) / 100.0f : GetRandomValue(30, 80) / 100.0f;
-        part.isAdditive = true;
-        part.size = (float)GetRandomValue((int)sizeMin, (int)sizeMax);
-        part.color = WHITE;
-        novaEx.particles.push_back(part);
-    }
-
-    // Gerar Detritos (Matéria Sólida: Rocha ou Sangue)
-    if (type == METEOR || type == MONSTER) {
-        int extraCount = (type == METEOR) ? 60 : 200;
-        if (type == MONSTER) {
-            int r = GetRandomValue(0, 2);
-            bloodBase = (r == 0) ? GREEN : (r == 1 ? BLUE : PURPLE);
-        }
-
-        for (int i = 0; i < extraCount; i++) {
-            float angle = GetRandomValue(0, 360) * DEG2RAD;
-            float speed = GetRandomValue(200, 420) / 10.0f; // 2.0 a 12.0
-            Particula mat;
-            mat.position = p;
-            mat.velocity = { cosf(angle) * speed, sinf(angle) * speed };
-            mat.lifePct = 50.0f;
-            mat.decayRate = GetRandomValue(30, 70) / 100.0f; 
-            mat.isAdditive = false;
-            
-            if (type == METEOR) {
-                mat.color = (GetRandomValue(0, 1) == 0) ? GRAY : DARKGRAY;
-                mat.size = (float)GetRandomValue(2, 6);
-            } else {
-                int var = GetRandomValue(0, 2);
-                mat.color = (var == 0) ? bloodBase : (var == 1 ? ColorBrightness(bloodBase, 0.4f) : ColorBrightness(bloodBase, -0.4f));
-                mat.size = (float)GetRandomValue(2, 5);
-            }
-            novaEx.particles.push_back(mat);
-        }
-    }
-    explosoesAtivas.push_back(novaEx);
-}
-
-void AtualizarExplosoes() {
-    float dt = GetFrameTime();
-    bool turbo = IsKeyDown(KEY_K);
-
-    // 2. Define a velocidade com que o "cenário" passa
-    // Ajuste esses valores: 3.0f (normal) e 15.0f (turbo) conforme o gosto
-    float velocidadeQueda = turbo ? 10.0f : 3.0f;
-
-    for (int i = 0; i < (int)explosoesAtivas.size(); i++) {
-        int aliveCount = 0;
-        for (auto &p : explosoesAtivas[i].particles) {
-            if (p.lifePct > 0) {
-                // Multiplicamos por 60 para manter a velocidade do seu teste original
-                // mesmo rodando a 120 FPS
-                p.position.x += p.velocity.x * dt * 10.0f;
-                p.position.y += p.velocity.y * dt * 10.0f;
-                
-                // --- NOVO: APLICA A VELOCIDADE DA NAVE ---
-                // Só aplica para partículas SÓLIDAS (!isAdditive) como você pediu.
-                // Se quiser que o fogo fique pra trás também, remova o "if".
-                //if (!p.isAdditive) { 
-                    // Soma posição Y para fazer ela "cair"
-                    p.position.y += velocidadeQueda * dt * 20.0f; 
-                //}
-
-                float friction = (p.isAdditive) ? 0.95f : 0.99f;
-                p.velocity.x *= friction;
-                p.velocity.y *= friction;
-
-                if (p.isAdditive) p.size += 0.5f; 
-                p.lifePct -= p.decayRate * dt * 4.0f; // Ajuste de tempo
-                aliveCount++;
-            }
-        }
-        if (aliveCount == 0) {
-            explosoesAtivas.erase(explosoesAtivas.begin() + i);
-            i--;
-        }
-    }
-}
-
-
-
-void DesenharExplosoes() {
-    // Passagem 1: Sólidos (Sem brilho)
-    for (auto &ex : explosoesAtivas) {
-        for (auto &p : ex.particles) {
-            if (p.lifePct > 0 && !p.isAdditive) {
-                Color c = (ex.currentType == MONSTER) ? GetBloodColor(p.color, p.lifePct) : ColorAlpha(p.color, p.lifePct > 0.15f ? 1.0f : p.lifePct * 6.0f);
-                DrawCircleV(p.position, p.size, c);
-            }
-        }
-    }
-    // Passagem 2: Brilho (Additive)
-    BeginBlendMode(BLEND_ADDITIVE);
-    for (auto &ex : explosoesAtivas) {
-        for (auto &p : ex.particles) {
-            if (p.lifePct > 0 && p.isAdditive) {
-                DrawTexturePro(texParticula, {0,0,64,64}, {p.position.x, p.position.y, p.size, p.size}, {p.size/2, p.size/2}, 0.0f, ColorAlpha(GetFireColor(p.lifePct), p.lifePct));
-            }
-        }
-    }
-    EndBlendMode();
 }
 
 void CarregarPlanoDeVoo() {
@@ -707,7 +536,9 @@ void desenhar() {
             if (timerLiberarNave < 3.0f) {
                 bloqueioBoss = true; // Segura a nave por mais 3 segundos de suspense
             } else {
-                bloqueioBoss = false; // LIBERADO! Pode acelerar e a distância volta a cair.
+                bloqueioBoss = false; 
+                boss = false;
+                boss_defeated = true;
             }
         }
     } else {
@@ -715,22 +546,21 @@ void desenhar() {
         dropouGasol = false;
     }
 
-    // A trava da distância da viagem agora obedece o novo bloqueio inteligente
-    bool travarProgresso = bloqueioBoss;
+    if (distance_left > 0 && vida > 0) {
+        
+        // 1. Pega o tempo do frame, mas limita a no máximo 0.1 segundos
+        float dtSeguro = GetFrameTime();
+        if (dtSeguro > 0.1f) dtSeguro = 0.1f; 
 
-    if (!bloqueioBoss) {
-        if (distance_left > 0 && vida > 0 && !travarProgresso) {
-            // O avanço real no espaço é puramente a velocidade atual da nave
-            float avanco_exato = (jogador->minhaNave->velocidadeAtual * GetFrameTime()) * mult;
+        // 2. Usa o dtSeguro ao invés do GetFrameTime()
+        float avanco_exato = (jogador->minhaNave->velocidadeAtual * dtSeguro) * mult; 
+        
+        distance_traveled += avanco_exato;
+        distance_left -= avanco_exato;
             
-            distance_traveled += (int)avanco_exato;
-            distance_left -= (int)avanco_exato;
-            
-            // Trava para não passar do limite e negativar
-            if (distance_left < 0) {
-                distance_left = 0;
-                distance_traveled = distance_total;
-            }
+        if (distance_left < 0.0f) {
+            distance_left = 0.0f;
+            distance_traveled = distance_total;
         }
     }
 
@@ -790,6 +620,7 @@ void desenhar() {
                 if (b.framesNoEscuro >= b.framesParaAtacar) {
                     boss = true;
                     boss_defeated = false;
+                    b.processado = true;
                     chefeFinal->Resetar();
                 }
             }
@@ -799,12 +630,6 @@ void desenhar() {
             if (!boss) { 
                 b.processado = true; 
             }
-        }
-
-        // --- BOSS DERROTADO ---
-        if (boss && boss_defeated && inBossZone) {
-            b.processado = true;
-            boss = false; 
         }
         
         if (distance_traveled >= b.inicioAL - distAviso && distance_traveled < b.inicioAL) avisoBoss = true;
@@ -1083,7 +908,7 @@ void desenhar() {
                         tiros[i].x <= meteoros[m].pos.x + 60) {       
                         
                         PlaySound(bomb);
-                        AdicionarExplosao({meteoros[m].pos.x + 30, meteoros[m].pos.y + 20}, SMALL_SHIP); 
+                        fxExplosoes->AdicionarExplosao({meteoros[m].pos.x + 30, meteoros[m].pos.y + 20}, METEOR); 
                         
                         // Lógica de Sobrevivência (Game Design)
                         if (meteoros[m].isEmergencia) {
@@ -1573,7 +1398,7 @@ void desenhar() {
                 }
 
                 // Chama a explosão (Usei METEOR para soltar as pedrinhas cinzas)
-                AdicionarExplosao(posExplosao, METEOR); 
+                fxExplosoes->AdicionarExplosao(posExplosao, METEOR); 
                 
                 meteoros[m].ativo = false; // Desativa a pedra
             }
@@ -1619,7 +1444,7 @@ void desenhar() {
             pirataResetadoNestaZona = false; // Se tiver outra zona roxa, spawna outro!
         }
 
-        if (boss && !winn) {
+        if ((boss || boss_defeated) && !winn) {
             if (chefeFinal->vida > 0) {
                 bool tocaSomDano = false;
                 // Passamos o 'jogador' em vez da 'vida', e a hitbox ajustada (nave_x + 20, nave_y)
@@ -1638,7 +1463,8 @@ void desenhar() {
                 // O Boss cuida dos timers, o Jogo apenas solta a partícula externa e o som
                 if (engatilhaExplosao) {
                     PlaySound(bomb);
-                    AdicionarExplosao({(float)chefeFinal->x + GetRandomValue(30, 270), (float)chefeFinal->y + GetRandomValue(30, 270)}, MONSTER);
+                    // Dispara apenas 1 explosão no centro do chefe
+                    fxExplosoes->AdicionarExplosao({(float)chefeFinal->x + 150.0f, (float)chefeFinal->y + 150.0f}, MONSTER);
                 }
             }
         }
@@ -1671,7 +1497,7 @@ void desenhar() {
             if (enemylife <= 0) {
                 // 1. MORTE ÚNICA
                 PlaySound(bomb);
-                AdicionarExplosao({(float)enemyx + 30, (float)enemyy + 20}, SMALL_SHIP); 
+                fxExplosoes->AdicionarExplosao({(float)enemyx + 30, (float)enemyy + 20}, SMALL_SHIP); 
                 
                 // 2. DROP GARANTIDO (1 Ouro, 4 Ferros)
                 for(int j=0; j<5; j++) {
@@ -1726,7 +1552,7 @@ void desenhar() {
             }
         }
 
-        DesenharExplosoes();
+        fxExplosoes->Desenhar();
 
         if (winn) {
             pisc++;
@@ -1753,7 +1579,7 @@ void desenhar() {
             pisc++;
                     //CHAMAR EXPLOSAO GRANDE
             if (bum == 1) { // Só no primeiro frame da morte
-                AdicionarExplosao({(float)nave_x + 40, (float)nave_y + 40}, LARGE_SHIP);
+                fxExplosoes->AdicionarExplosao({(float)nave_x + 40, (float)nave_y + 40}, LARGE_SHIP);
             }
             DrawTexture(mort, mort_x, mort_y, WHITE);
             if (pisc < 100) {
@@ -1863,6 +1689,8 @@ int main() {
     // --- GERAÇÃO DA TEXTURA DE PARTÍCULA ---
     Image imgExp = GenImageGradientRadial(64, 64, 0.0f, WHITE, BLACK);
     texParticula = LoadTextureFromImage(imgExp);
+    fxExplosoes = new GerenciadorDeExplosoes();
+    fxExplosoes->Inicializar(texParticula);
     chefeFinal = new Boss();
     UnloadImage(imgExp);
 
@@ -1934,7 +1762,8 @@ int main() {
         // Se o PC for muito rápido e o frame for minúsculo, garante um mínimo
         if (mult < 0.1f) mult = 0.1f;
         controle();
-        AtualizarExplosoes();
+        float velocidadeQuedaCenario = IsKeyDown(KEY_K) ? 10.0f : 3.0f; // Turbo afeta o fundo
+        fxExplosoes->Atualizar(GetFrameTime(), velocidadeQuedaCenario);
         UpdateMusicStream(background_music);
         desenhar();
     }
