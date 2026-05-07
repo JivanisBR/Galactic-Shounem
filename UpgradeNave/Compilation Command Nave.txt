@@ -1,0 +1,1 @@
+g++ *.cpp ../Shared/Player.cpp ../Shared/Nave.cpp -o UpgradeNave.exe -I ../Shared -I C:\raylib\raylib-5.5_win64_mingw-w64\include -L C:\raylib\raylib-5.5_win64_mingw-w64\lib -lraylib -lopengl32 -lgdi32 -lwinmm
