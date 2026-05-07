@@ -47,7 +47,7 @@ Boss::~Boss() {
 void Boss::Resetar() {
     y = -600; vida = 50;
     mortoFlag = false; timerMorte = 0.0f;
-    cadenciaTiro = GetRandomValue(0.5f,1.0f);
+    cadenciaTiro = GetRandomValue(0.8f,1.3f);
     deathSoundDelay = 0; 
     bombCount = 0;
     pecasDestruidas.clear();
@@ -361,7 +361,7 @@ void Boss::ComportamentoMorto(float mult, float dt, bool& boss_defeated, bool& w
     
     timerMorte += (1.0f * mult);
     if (timerMorte >= 1300.0f) { 
-        boss_defeated = true; 
+        boss_defeated = false; 
         if (dist_traveled >= dist_total) { winn = true; }
         Resetar(); 
     }

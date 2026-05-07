@@ -598,41 +598,44 @@ void desenhar() {
         if (distance_traveled >= p.inicioAL && distance_traveled <= p.fimAL) inPirateZone = true;
     }
 
-    // 3. Scanner de Bosses com Cronômetro Isolado
+    // =================================================================
+    // 3. Scanner de Bosses - Lógica de Coordenadas Fixas
+    // =================================================================
     for (int i = 0; i < (int)planoBosses.size(); i++) {
         auto& b = planoBosses[i];
         
-        // --- DENTRO DA DARK ZONE ---
-        if (distance_traveled >= b.inicioAL && distance_traveled <= b.fimAL) {
+        bool fisicamenteNaZona = (distance_traveled >= b.inicioAL && distance_traveled <= b.fimAL);
+
+        if (fisicamenteNaZona) {
+            // REGRA VISUAL: Enquanto estiver no abismo, as estrelas somem.
             inBossZone = true; 
 
+            // REGRA LÓGICA: Só tenta spawnar se a zona ainda for inédita
             if (!b.processado && !boss) {
-                // Sorteia no primeiro frame exato que entra na zona
                 if (!b.calculouTempo) {
-                    b.framesParaAtacar = GetRandomValue(300, 900); // 300 = 5s, 900 = 15s
+                    b.framesParaAtacar = GetRandomValue(300, 900);
                     b.framesNoEscuro = 0;
                     b.calculouTempo = true;
                 }
 
                 b.framesNoEscuro++; 
                 
-                // O Boss SÓ nasce se a cota exata de frames for batida
                 if (b.framesNoEscuro >= b.framesParaAtacar) {
                     boss = true;
                     boss_defeated = false;
-                    b.processado = true;
+                    b.processado = true; 
                     chefeFinal->Resetar();
                 }
             }
         } 
-        // --- SAIU DA DARK ZONE (Fugiu a tempo) ---
         else if (distance_traveled > b.fimAL && !b.processado) {
-            if (!boss) { 
-                b.processado = true; 
-            }
+            b.processado = true; 
         }
         
-        if (distance_traveled >= b.inicioAL - distAviso && distance_traveled < b.inicioAL) avisoBoss = true;
+        // Alerta do Radar (só aparece se o boss ainda não foi ativado/passado)
+        if (distance_traveled >= b.inicioAL - distAviso && distance_traveled < b.inicioAL && !b.processado) {
+            avisoBoss = true;
+        }
     }
 
     // 1. BACKGROUND STARS (Animação Senoidal - Blindada contra bugs)
@@ -1397,7 +1400,6 @@ void desenhar() {
                     posExplosao.y = centroEscudoY + (dy / distancia) * 75.0f;
                 }
 
-                // Chama a explosão (Usei METEOR para soltar as pedrinhas cinzas)
                 fxExplosoes->AdicionarExplosao(posExplosao, METEOR); 
                 
                 meteoros[m].ativo = false; // Desativa a pedra
