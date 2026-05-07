@@ -14,6 +14,18 @@ public:
     float velocidadeMaxima;
     float combustivelAtual;
     float combustivelMaximo;
+
+    // Níveis dos Upgrades
+    int levelTiro = 1;
+    int levelEscudo = 1;
+    int levelTurbo = 1;
+    int levelEficiencia = 1;
+    int levelCombustivelMax = 1;
+
+    // Funções de Persistência
+    void SalvarStatus();
+    void CarregarStatus();
+    void ResetarUpgrades();
     
     // Variáveis Upáveis
     float forcaTurbo;            // O quanto a velocidade sobe por segundo

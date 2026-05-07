@@ -1,4 +1,5 @@
 #include "Nave.h"
+#include <fstream>
 
 // Construtor: Quando o jogador "ganha" a nave, ela vem com esses status
 Nave::Nave() {
@@ -25,9 +26,63 @@ Nave::Nave() {
     invFerro = 0;
     invPrata = 0;
     invOuro = 0;
+
+    CarregarStatus();
 }
 
 Nave::~Nave() {
+}
+
+void Nave::SalvarStatus() {
+    // Salva na raiz (Galactic Shounen/)
+    std::ofstream file("../save_nave.txt"); 
+    if (file.is_open()) {
+        // Gravando os atributos de gameplay
+        file << velocidadeMaxima << " " << combustivelMaximo << " " 
+             << forcaTurbo << " " << eficienciaCombustivel << " " 
+             << escudoMaximo << " " << cooldownTiro << " " << condensadorLevel << "\n";
+             
+        // Gravando os níveis dos upgrades
+        file << levelTiro << " " << levelEscudo << " " << levelTurbo << " " 
+             << levelEficiencia << " " << levelCombustivelMax << "\n";
+        file.close();
+    }
+}
+
+void Nave::CarregarStatus() {
+    // Busca na raiz (Galactic Shounen/)
+    std::ifstream file("../save_nave.txt");
+    if (file.is_open()) {
+        file >> velocidadeMaxima >> combustivelMaximo 
+             >> forcaTurbo >> eficienciaCombustivel 
+             >> escudoMaximo >> cooldownTiro >> condensadorLevel;
+             
+        file >> levelTiro >> levelEscudo >> levelTurbo 
+             >> levelEficiencia >> levelCombustivelMax;
+        file.close();
+    } else {
+        // Se o arquivo não existir (primeira vez jogando), 
+        // ele mantém os valores padrão definidos no construtor.
+    }
+}
+
+void Nave::ResetarUpgrades() {
+    // Retorna ao Game Feel original
+    velocidadeMaxima = 5000.0f;
+    combustivelMaximo = 100.0f;
+    forcaTurbo = 50.0f;
+    eficienciaCombustivel = 0.0f;
+    escudoMaximo = 10;
+    cooldownTiro = 0.0f;
+    condensadorLevel = 1;
+    
+    levelTiro = 1;
+    levelEscudo = 1;
+    levelTurbo = 1;
+    levelEficiencia = 1;
+    levelCombustivelMax = 1;
+
+    SalvarStatus(); // Salva o reset no arquivo
 }
 
 // O Cérebro da movimentação espacial
