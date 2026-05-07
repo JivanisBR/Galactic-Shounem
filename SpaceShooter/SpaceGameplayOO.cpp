@@ -311,7 +311,7 @@ void CarregarPlanoDeVoo() {
         else if (chave == "NAVE_COMBUSTIVEL") { arquivo >> jogador->minhaNave->combustivelAtual >> jogador->minhaNave->combustivelMaximo; }
         else if (chave == "NAVE_ESCUDO") { arquivo >> jogador->minhaNave->escudoAtual >> jogador->minhaNave->escudoMaximo; }
         else if (chave == "NAVE_MINERIOS") { arquivo >> jogador->minhaNave->invFerro >> jogador->minhaNave->invPrata >> jogador->minhaNave->invOuro; }
-        else if (chave == "NAVE_UPGRADES") { arquivo >> jogador->minhaNave->forcaTurbo >> jogador->minhaNave->eficienciaCombustivel >> jogador->minhaNave->taxaConsumoBase; }
+       // else if (chave == "NAVE_UPGRADES") { arquivo >> jogador->minhaNave->forcaTurbo >> jogador->minhaNave->eficienciaCombustivel >> jogador->minhaNave->taxaConsumoBase; }
         
         else if (chave == "VIAGEM_DISTANCIA") { 
             int distAL; arquivo >> distAL; 
@@ -401,9 +401,9 @@ void controle() {
             PlaySound(sob[sob_index]);
             sob_index = (sob_index + 1) % 5;
             
-            // RESETA O TEMPO DE ESPERA (Cadência)
-            // 8.0f = Metralhadora rápida. 20.0f = Tiro lento. Ajuste a gosto!
-            cooldownTiro = 40.0f; 
+            //cadencia do tiro
+            cooldownTiro = 50.0f - (jogador->minhaNave->levelTiro * 5.0f); 
+            if (cooldownTiro < 5.0f) cooldownTiro = 5.0f;
         }
         if (IsKeyDown(KEY_A) && vida > 0 || IsKeyDown(KEY_LEFT) && vida > 0) {
             nave_x -= (int)(velo * mult);
@@ -1700,6 +1700,8 @@ int main() {
     chefeFinal = new Boss();
     jogador = new Player("Piloto"); 
     CarregarPlanoDeVoo(); 
+    jogador->minhaNave->CarregarStatus();
+    jogador->minhaNave->escudoAtual = jogador->minhaNave->escudoMaximo;
     jogador->minhaNave->velocidadeAtual = 50.0f;
 
     // --- INICIALIZAÇÃO DAS VARIÁVEIS ---
