@@ -17,6 +17,8 @@ Nave::Nave() {
     taxaConsumoBase = 10.0f;     // Gasta 10 de comb por seg padrão
     escudoMaximo = 10; 
     escudoAtual = escudoMaximo;
+    velocidadeMovimentacao = 3.0f;
+    forcaFreio = 50.0f;
 
     // Status Iniciais de Combate
     cooldownTiro = 0.0f;
@@ -34,40 +36,59 @@ Nave::~Nave() {
 }
 
 void Nave::SalvarStatus() {
-    // Salva na raiz (Galactic Shounen/)
     std::ofstream file("../save_nave.txt"); 
     if (file.is_open()) {
-        // Gravando os atributos de gameplay
-        file << velocidadeMaxima << " " << combustivelMaximo << " " 
-             << forcaTurbo << " " << eficienciaCombustivel << " " 
-             << escudoMaximo << " " << cooldownTiro << " " << condensadorLevel << "\n";
+        // Gravando os atributos na ordem correta (9 variáveis)
+        file << velocidadeMaxima << " " 
+             << combustivelMaximo << " " 
+             << forcaTurbo << " " 
+             << eficienciaCombustivel << " " 
+             << escudoMaximo << " " 
+             << cooldownTiro << " " 
+             << condensadorLevel << " "
+             << velocidadeMovimentacao << " " 
+             << forcaFreio << "\n";
              
-        // Gravando os níveis dos upgrades
-        file << levelTiro << " " << levelEscudo << " " << levelTurbo << " " 
-             << levelEficiencia << " " << levelCombustivelMax << "\n";
+        // Gravando os níveis na mesma ordem (7 variáveis)
+        file << levelTiro << " " 
+             << levelEscudo << " " 
+             << levelTurbo << " " 
+             << levelEficiencia << " " 
+             << levelCombustivelMax << " " 
+             << levelMovimentacao << " " 
+             << levelFreio << "\n";
+             
         file.close();
     }
 }
 
 void Nave::CarregarStatus() {
-    // Busca na raiz (Galactic Shounen/)
     std::ifstream file("../save_nave.txt");
     if (file.is_open()) {
-        file >> velocidadeMaxima >> combustivelMaximo 
-             >> forcaTurbo >> eficienciaCombustivel 
-             >> escudoMaximo >> cooldownTiro >> condensadorLevel;
+        file >> velocidadeMaxima 
+             >> combustivelMaximo 
+             >> forcaTurbo 
+             >> eficienciaCombustivel 
+             >> escudoMaximo 
+             >> cooldownTiro 
+             >> condensadorLevel
+             >> velocidadeMovimentacao 
+             >> forcaFreio;
              
-        file >> levelTiro >> levelEscudo >> levelTurbo 
-             >> levelEficiencia >> levelCombustivelMax;
+        file >> levelTiro 
+             >> levelEscudo 
+             >> levelTurbo 
+             >> levelEficiencia 
+             >> levelCombustivelMax
+             >> levelMovimentacao 
+             >> levelFreio;
+             
         file.close();
-    } else {
-        // Se o arquivo não existir (primeira vez jogando), 
-        // ele mantém os valores padrão definidos no construtor.
     }
 }
 
 void Nave::ResetarUpgrades() {
-    // Retorna ao Game Feel original
+    // Retorna ao original
     velocidadeMaxima = 5000.0f;
     combustivelMaximo = 100.0f;
     forcaTurbo = 50.0f;
@@ -75,7 +96,10 @@ void Nave::ResetarUpgrades() {
     escudoMaximo = 10;
     cooldownTiro = 0.0f;
     condensadorLevel = 1;
-    
+    velocidadeMovimentacao = 3.0f;
+    forcaFreio = 50.0f;
+    levelMovimentacao = 1;
+    levelFreio = 1;
     levelTiro = 1;
     levelEscudo = 1;
     levelTurbo = 1;
@@ -102,7 +126,7 @@ void Nave::AtualizarVoo(float dt, bool usandoTurbo, bool usandoFreio) {
     // 2. Lógica do Freio (Retropropulsores)
     if (usandoFreio && combustivelAtual > 0.0f) {
         combustivelAtual -= consumoReal * dt;
-        velocidadeAtual -= forcaTurbo * dt; // Freia com a mesma força do motor
+        velocidadeAtual -= forcaFreio * dt; 
         
         if (velocidadeAtual < 0.0f) velocidadeAtual = 0.0f; 
     }

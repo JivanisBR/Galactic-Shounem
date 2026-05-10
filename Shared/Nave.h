@@ -21,6 +21,8 @@ public:
     int levelTurbo = 1;
     int levelEficiencia = 1;
     int levelCombustivelMax = 1;
+    int levelMovimentacao = 1;
+    int levelFreio = 1;
 
     // Funções de Persistência
     void SalvarStatus();
@@ -33,6 +35,8 @@ public:
     float taxaConsumoBase;       // O gasto padrão de combustível por segundo
     int escudoMaximo;
     int escudoAtual;
+    float forcaFreio; 
+    float velocidadeMovimentacao;
 
     int condensadorLevel = 1;
     float timerCondensador = 0.0f;
