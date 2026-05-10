@@ -33,20 +33,26 @@ int main() {
         { {450, 100, 250, 80}, DARKBLUE, BLUE, "Escudo Maximo", &minhaNave.levelEscudo, 
           [](Nave& n){ n.levelEscudo++; n.escudoMaximo += 5; n.escudoAtual = n.escudoMaximo; } },
           
-        { {100, 220, 250, 80}, DARKGREEN, GREEN, "Forca do Turbo", &minhaNave.levelTurbo, 
+        { {100, 200, 250, 80}, DARKGREEN, GREEN, "Forca do Turbo", &minhaNave.levelTurbo, 
           [](Nave& n){ n.levelTurbo++; n.forcaTurbo += 15.0f; n.velocidadeMaxima += 500.0f; } },
           
-        { {450, 220, 250, 80}, ORANGE, GOLD, "Capacidade Combustivel", &minhaNave.levelCombustivelMax, 
+        { {450, 200, 250, 80}, ORANGE, GOLD, "Capacidade Combustivel", &minhaNave.levelCombustivelMax, 
           [](Nave& n){ n.levelCombustivelMax++; n.combustivelMaximo += 25.0f; } },
           
-        { {100, 340, 250, 80}, PURPLE, VIOLET, "Eficiencia Combustivel", &minhaNave.levelEficiencia, 
+        { {100, 300, 250, 80}, PURPLE, VIOLET, "Eficiencia Combustivel", &minhaNave.levelEficiencia, 
           [](Nave& n){ n.levelEficiencia++; n.eficienciaCombustivel += 10.0f; } },
           
-        { {450, 340, 250, 80}, DARKGRAY, LIGHTGRAY, "Condensador AFK", &minhaNave.condensadorLevel, 
-          [](Nave& n){ n.condensadorLevel++; } }
+        { {450, 300, 250, 80}, DARKGRAY, LIGHTGRAY, "Condensador AFK", &minhaNave.condensadorLevel, 
+          [](Nave& n){ n.condensadorLevel++; } },
+
+        { {100, 400, 250, 80}, DARKBROWN, BROWN, "Mobilidade (Eixos)", &minhaNave.levelMovimentacao, 
+          [](Nave& n){ n.levelMovimentacao++; n.velocidadeMovimentacao += 0.25f; } },
+
+        { {450, 400, 250, 80}, Color{0, 128, 128, 255}, SKYBLUE, "Eficiencia do Freio", &minhaNave.levelFreio, 
+          [](Nave& n){ n.levelFreio++; n.forcaFreio += 20.0f; } }
     };
 
-    Rectangle btnReset = { 275, 480, 250, 60 };
+    Rectangle btnReset = { 275, 500, 250, 60 };
 
     while (!WindowShouldClose()) {
         Vector2 mousePos = GetMousePosition();
