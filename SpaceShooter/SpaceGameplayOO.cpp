@@ -135,7 +135,7 @@ bool menu = true, creds = false, quit = false, boss = false, enemy = false, winn
 int bum = 0, vmin = 1, vmax = 4, pisc = 0;
 int mort_x = 250, mort_y = 70;
 int pontos = 0, storo1 = 0, storo2 = 0, storo3 = 0, ng = 0;
-int nave_x = 390, nave_y = 600, velo = 3, tvel = 5;
+int nave_x = 390, nave_y = 600, tvel = 5;
 int exp_x, exp_y;
 int death_x, death_y, vida = 10;
 int fire_x, fire_y;
@@ -406,22 +406,22 @@ void controle() {
             if (cooldownTiro < 5.0f) cooldownTiro = 5.0f;
         }
         if (IsKeyDown(KEY_A) && vida > 0 || IsKeyDown(KEY_LEFT) && vida > 0) {
-            nave_x -= (int)(velo * mult);
+            nave_x -= (int)(jogador->minhaNave->velocidadeMovimentacao * mult);
             foga++;
             if (foga > 90) foga = 0;
         }
         if (IsKeyDown(KEY_D) && vida > 0 || IsKeyDown(KEY_RIGHT) && vida > 0) {
-            nave_x += (int)(velo * mult);
+            nave_x += (int)(jogador->minhaNave->velocidadeMovimentacao * mult);
             fogd++;
             if (fogd > 90) fogd = 0;
         }
         if (IsKeyDown(KEY_W) && vida > 0 || IsKeyDown(KEY_UP) && vida > 0) {
-            nave_y -= (int)(velo * mult);
+            nave_y -= (int)(jogador->minhaNave->velocidadeMovimentacao * mult);
             fogd++;
             if (fogd > 90) fogd = 0;
         }
         if (IsKeyDown(KEY_S) && vida > 0 || IsKeyDown(KEY_DOWN) && vida > 0) {
-            nave_y += (int)(velo * mult);
+            nave_y += (int)(jogador->minhaNave->velocidadeMovimentacao * mult);
             fogd++;
             if (fogd > 90) fogd = 0;
         }
@@ -1288,7 +1288,7 @@ void desenhar() {
         
         if (!winn && !boss) {
             if (temCinturao) {
-                limiteMeteoros = 10; // 15 METEOROS AO MESMO TEMPO NA TELA!
+                limiteMeteoros = 10; // 10 METEOROS AO MESMO TEMPO NA TELA!
             } else if (velocidadeBaixa) {
                 limiteMeteoros = 2; // Farm tranquilo
             }
