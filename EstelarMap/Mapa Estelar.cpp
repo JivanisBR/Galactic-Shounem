@@ -426,6 +426,152 @@ void RotacionarPonto(Vector2& p, float anguloGraus) {
     float anguloGalaxia = 0.0f;
     const float VELOCIDADE_ROTACAO = -0.01f; // Muito lento e sutil (aumente para testar)
 
+
+// =====================================================================
+// SISTEMA DE SAVE / LOAD
+// =====================================================================
+
+// Funções para trocar espaços por "_" para o C++ ler o arquivo txt sem quebrar
+std::string FormatarString(std::string str) {
+    for (char& c : str) if (c == ' ') c = '_';
+    if (str.empty()) return "NULO";
+    return str;
+}
+
+std::string DesformatarString(std::string str) {
+    for (char& c : str) if (c == '_') c = ' ';
+    if (str == "NULO") return "";
+    return str;
+}
+
+void SalvarJogo(const std::vector<Estrela>& galaxia, const Player* jogador, 
+                const std::vector<ZonaMeteoro>& meteoros, const std::vector<ZonaPirata>& piratas,
+                int estrelaAtual, int estrelaCasa, bool spawnDefinido,
+                bool v1, bool v2, bool v3, bool v4, bool v5, bool v6) {
+    
+    std::ofstream arquivo("save.txt");
+    if (!arquivo.is_open()) return;
+
+    // 1. Status do Jogador e Nave (Casting para int nas cores!)
+    arquivo << "PLAYER_DATA " << FormatarString(jogador->nome) << " " << jogador->dinheiro << " " 
+            << jogador->pdlBase << " " << jogador->pdlMaximo << " " << (int)jogador->corAura.r << " " 
+            << (int)jogador->corAura.g << " " << (int)jogador->corAura.b << "\n";
+    
+    arquivo << "NAVE_DATA " << jogador->minhaNave->combustivelAtual << " " << jogador->minhaNave->escudoAtual << " "
+            << jogador->minhaNave->invFerro << " " << jogador->minhaNave->invPrata << " " << jogador->minhaNave->invOuro << "\n";
+
+    // 2. Estado do Mapa e Filtros
+    arquivo << "MAP_STATE " << estrelaAtual << " " << estrelaCasa << " " << spawnDefinido << "\n";
+    arquivo << "FILTERS " << v1 << " " << v2 << " " << v3 << " " << v4 << " " << v5 << " " << v6 << "\n";
+
+    // 3. Zonas de Perigo
+    arquivo << "METEOROS_COUNT " << meteoros.size() << "\n";
+    for(const auto& m : meteoros) arquivo << m.pos.x << " " << m.pos.y << " " << m.raio << "\n";
+
+    arquivo << "PIRATAS_COUNT " << piratas.size() << "\n";
+    for(const auto& p : piratas) arquivo << p.pos.x << " " << p.pos.y << " " << p.raio << "\n";
+
+    // 4. Galáxia
+    arquivo << "GALAXY_COUNT " << galaxia.size() << "\n";
+    for (const auto& e : galaxia) {
+        arquivo << "STAR " << e.pos.x << " " << e.pos.y << " " << e.tam_base << " " << e.taxafuel << " " << (int)e.postoVisitado << " "
+                << (int)e.tem_chefe << " " << (int)e.eh_lendario << " " << e.nivel_maximo << " " 
+                << (int)e.cor_aura.r << " " << (int)e.cor_aura.g << " " << (int)e.cor_aura.b << " " << FormatarString(e.nome_chefe) << "\n";
+        
+        arquivo << "SCIDATA " << FormatarString(e.classificacao_cientifica) << " " << e.idade_milhoes_anos << "\n";
+        
+        arquivo << "PLANETS_COUNT " << e.planetas.size() << "\n";
+        for (const auto& p : e.planetas) {
+            arquivo << "P " << p.tipo_vida << " " << FormatarString(p.nome) << " " << FormatarString(p.desc_vida) << "\n";
+        }
+    }
+
+    arquivo.close();
+    TraceLog(LOG_INFO, "Jogo Salvo com Sucesso!");
+}
+
+bool CarregarJogo(std::vector<Estrela>& galaxia, Player* jogador, 
+                  std::vector<ZonaMeteoro>& meteoros, std::vector<ZonaPirata>& piratas,
+                  int& estrelaAtual, int& estrelaCasa, bool& spawnDefinido,
+                  bool& v1, bool& v2, bool& v3, bool& v4, bool& v5, bool& v6) {
+    
+    std::ifstream arquivo("save.txt");
+    if (!arquivo.is_open()) return false;
+
+    std::string chave;
+    while (arquivo >> chave) {
+        if (chave == "PLAYER_DATA") {
+            int r, g, b; std::string nome;
+            arquivo >> nome >> jogador->dinheiro >> jogador->pdlBase >> jogador->pdlMaximo >> r >> g >> b;
+            jogador->nome = DesformatarString(nome);
+            jogador->corAura = {(unsigned char)r, (unsigned char)g, (unsigned char)b, 255};
+            jogador->pdlAtual = jogador->pdlBase; // Restaura Ki inicial
+        } 
+        else if (chave == "NAVE_DATA") {
+            arquivo >> jogador->minhaNave->combustivelAtual >> jogador->minhaNave->escudoAtual
+                    >> jogador->minhaNave->invFerro >> jogador->minhaNave->invPrata >> jogador->minhaNave->invOuro;
+        } 
+        else if (chave == "MAP_STATE") arquivo >> estrelaAtual >> estrelaCasa >> spawnDefinido;
+        else if (chave == "FILTERS") arquivo >> v1 >> v2 >> v3 >> v4 >> v5 >> v6;
+        else if (chave == "METEOROS_COUNT") {
+            int qtd; arquivo >> qtd; meteoros.clear();
+            for (int i=0; i<qtd; i++) { ZonaMeteoro z; arquivo >> z.pos.x >> z.pos.y >> z.raio; meteoros.push_back(z); }
+        } 
+        else if (chave == "PIRATAS_COUNT") {
+            int qtd; arquivo >> qtd; piratas.clear();
+            for (int i=0; i<qtd; i++) { ZonaPirata p; arquivo >> p.pos.x >> p.pos.y >> p.raio; piratas.push_back(p); }
+        } 
+        else if (chave == "GALAXY_COUNT") {
+            int qtd; arquivo >> qtd; galaxia.clear();
+            for (int i=0; i<qtd; i++) {
+                Estrela e = {};
+                std::string lixo, nomeChefe, classeCi; 
+                int postoVis, temChefe, ehLendario, r, g, b;
+                
+                arquivo >> lixo >> e.pos.x >> e.pos.y >> e.tam_base >> e.taxafuel >> postoVis
+                        >> temChefe >> ehLendario >> e.nivel_maximo >> r >> g >> b >> nomeChefe;
+                
+                e.postoVisitado = postoVis; e.tem_chefe = temChefe; e.eh_lendario = ehLendario;
+                e.cor_aura = {(unsigned char)r, (unsigned char)g, (unsigned char)b, 255};
+                e.nome_chefe = DesformatarString(nomeChefe);
+                
+                arquivo >> lixo >> classeCi >> e.idade_milhoes_anos;
+                e.classificacao_cientifica = DesformatarString(classeCi);
+
+                // Reconstrói a aura e física
+                e.tam_nucleo = e.tam_base;
+                e.escala_minima = (float)GetRandomValue(5, 20) / 100.0f;
+                if(e.escala_minima < 0.15f) e.escala_minima = 0.15f;
+                e.nivel_base = (int)(e.nivel_maximo * e.escala_minima);
+                e.nivel_atual = e.nivel_base;
+                e.estado_ki = ESCONDIDO;
+                e.escala_atual = e.escala_minima;
+                
+                if (e.tem_chefe) {
+                    e.diametro_maximo = (e.nivel_maximo > 2000000) ? 700.0f : 300.0f;
+                    int qtdRaios = (e.nivel_maximo > 2500000) ? 12 : (e.nivel_maximo > 2000000 ? 8 : 4);
+                    for(int k=0; k<qtdRaios; k++) { Raio rObj; RegenerarRaio(rObj, e.diametro_maximo/2.0f, 3, 5, 1.0f); e.raios.push_back(rObj); }
+                    int qtdPart = std::min(300, std::max(20, e.nivel_maximo / 10000));
+                    for(int k=0; k<qtdPart; k++) { ParticulaAura pA; pA.vida=0; e.particulas_ki.push_back(pA); }
+                }
+
+                arquivo >> lixo; // "PLANETS_COUNT"
+                int pQtd; arquivo >> pQtd;
+                for(int p=0; p<pQtd; p++) {
+                    std::string nPlaneta, dPlaneta; Planeta plan;
+                    arquivo >> lixo >> plan.tipo_vida >> nPlaneta >> dPlaneta;
+                    plan.nome = DesformatarString(nPlaneta); plan.desc_vida = DesformatarString(dPlaneta);
+                    e.planetas.push_back(plan);
+                }
+                e.sistema_gerado = true;
+                galaxia.push_back(e);
+            }
+        }
+    }
+    arquivo.close();
+    return true;
+}
+
 //----------------------------------------------------------------------------------
 // MAIN
 //----------------------------------------------------------------------------------
@@ -439,7 +585,64 @@ int main(void)
     const int screenHeight = 700;
     
     InitWindow(screenWidth, screenHeight, "Mapa Galactico - Navegacao");
+    SetExitKey(KEY_NULL);
     SetTargetFPS(60);
+
+    // --- DECLARAÇÃO MESTRA (Deve vir antes do menu e do IF de LOAD) ---
+    std::vector<Estrela> galaxia;
+    std::vector<Nebulosa> nebulosas(20);
+    std::vector<Vector2> poeira(1000); 
+    for(auto& p : poeira) p = { (float)GetRandomValue(-3000, 3000), (float)GetRandomValue(-3000, 3000) };
+
+    std::vector<ZonaMeteoro> zonasMeteoros;
+    std::vector<ZonaPirata> zonasPiratas;
+
+    Player* jogador = new Player("Kreits"); 
+    bool spawnDefinido = false; 
+    int estrelaAtualPlayer = -1;
+    int estrelaCasaPlayer = -1;
+    float timerPingPlayer = 0.0f; 
+    float timerPingCasa = 0.0f;
+    Vector2 posNaveAtual = {0, 0};
+    bool animandoViagem = false; 
+    int estrelaDestinoCurto = -1;
+
+    // Variáveis para a Tela Inicial
+    bool emTelaInicial = true;
+    int selectInicial = 0; // 0 = NEW, 1 = LOAD
+    bool existeSave = FileExists("save.txt");
+
+    while (emTelaInicial && !WindowShouldClose()) {
+        if (IsKeyPressed(KEY_DOWN) || IsKeyPressed(KEY_S)) {
+            selectInicial = 1;
+        }
+        if (IsKeyPressed(KEY_UP) || IsKeyPressed(KEY_W)) {
+            selectInicial = 0;
+        }
+
+        if (IsKeyPressed(KEY_ENTER)) {
+            if (selectInicial == 0) emTelaInicial = false; // Inicia novo
+            else if (selectInicial == 1 && existeSave) {
+                // Aqui você chamaria sua função de carregar e emTelaInicial = false;
+                emTelaInicial = false;
+            }
+        }
+
+        BeginDrawing();
+        ClearBackground(BLACK);
+        
+        DrawText("SPACE PLAGYL - MAPA ESTELAR", screenWidth/2 - 200, 200, 30, WHITE);
+        
+        Color corNew = (selectInicial == 0) ? WHITE : BLUE;
+        Color corLoad = !existeSave ? DARKGRAY : (selectInicial == 1 ? WHITE : BLUE);
+        
+        DrawText("NEW GAME", screenWidth/2 - 50, 350, 20, corNew);
+        DrawText("LOAD GAME", screenWidth/2 - 50, 400, 20, corLoad);
+        
+        if(!existeSave) DrawText("(No save found)", screenWidth/2 + 70, 405, 10, RED);
+
+        EndDrawing();
+    }
 
     // --- CONFIGURAÇÃO DA CÂMERA ---
     Camera2D camera = { 0 };
@@ -449,17 +652,6 @@ int main(void)
     camera.zoom = 0.5f; // Começa um pouco afastado
     bool cameraTravada = true;
     int focoCamera = -1; // -1 = Segue a Nave, >= 0 = Segue uma Estrela específica
-
-    // --- GERAÇÃO DA GALÁXIA ---
-    const int NUM_ESTRELAS = 450; // Quantidade fixa
-    std::vector<Estrela> galaxia(NUM_ESTRELAS);
-    std::vector<Nebulosa> nebulosas(20);
-    std::vector<Vector2> poeira(1000); // Poeira de fundo fixa
-
-    // 1. Gerar Poeira de Fundo (Espalhada numa área grande)
-    for(auto& p : poeira) {
-        p = { (float)GetRandomValue(-3000, 3000), (float)GetRandomValue(-3000, 3000) };
-    }
 
     /*// 2. Gerar Nebulosas (Seguindo os Braços Espirais)
     // Usamos o vetor 'nebulosas' que já foi declarado lá em cima
@@ -506,6 +698,7 @@ int main(void)
     }*/
 
     // ==================================================================
+    
     // ==================================================================
     // GERAÇÃO CONTROLADA POR MAPA DE LÓGICA (RGB)
     // ==================================================================
@@ -526,306 +719,33 @@ int main(void)
     // 2. PREPARAR O FUNDO (Visual)
     Texture2D texFundoGalaxia = LoadTextureFromImage(imgVisual);
 
-    const int LIMITE_ESTRELAS = 4000;
+    // ==================================================================
+    // BIFURCAÇÃO MESTRA: NEW GAME vs LOAD GAME
+    // ==================================================================
+    if (selectInicial == 0) {
 
-    // CONTROLE DE QUADRANTES (Para Entidades)
-    bool bossQ1 = false; // Top-Right
-    bool bossQ2 = false; // Top-Left
-    bool bossQ3 = false; // Bottom-Left
-    bool bossQ4 = false; // Bottom-Right
-    float raioSpawnCentro = 150.0f;   
+        const int LIMITE_ESTRELAS = 4000;
 
-    //CONTROLE DE DEUSES (Para evitar spawn muito próximo)
-    std::vector<Vector2> posicoesDeuses;
-    const float RAIO_EXCLUSAO_DEUS = 100.0f; 
+        // CONTROLE DE QUADRANTES (Para Entidades)
+        bool bossQ1 = false; // Top-Right
+        bool bossQ2 = false; // Top-Left
+        bool bossQ3 = false; // Bottom-Left
+        bool bossQ4 = false; // Bottom-Right
+        float raioSpawnCentro = 150.0f;   
 
-    // --- ENTIDADES GUARDIÕES DO CENTRO (POSIÇÕES FIXAS E ORGANIZADAS) ---
-    float angulosCentro[4] = { 0.0f, 90.0f, 180.0f, 270.0f };
-    for (int i = 0; i < 4; i++) {
-        Estrela eFaltante = {}; 
-        
-        float radianos = angulosCentro[i] * DEG2RAD;
-        eFaltante.pos = { cosf(radianos) * raioSpawnCentro, sinf(radianos) * raioSpawnCentro };
-        eFaltante.escala_minima = 0.5f;
+        //CONTROLE DE DEUSES (Para evitar spawn muito próximo)
+        std::vector<Vector2> posicoesDeuses;
+        const float RAIO_EXCLUSAO_DEUS = 100.0f; 
 
-        do {
-            ConfigurarBoss(eFaltante);
-        } while (!eFaltante.tem_chefe);
-        
-        eFaltante.nivel_maximo = GetRandomValue(2500001, 3000000);
-        eFaltante.diametro_maximo = (float)GetRandomValue(700, 1000);
-        eFaltante.nome_chefe = "ENTIDADE " + GerarNomeProcedural();
-        eFaltante.eh_lendario = true;
-        eFaltante.nivel_base = (int)(eFaltante.nivel_maximo * eFaltante.escala_minima);
-        eFaltante.nivel_atual = eFaltante.nivel_base;
-
-        for(int k=0; k<12; k++) { 
-            Raio r;
-            float escala = (float)GetRandomValue(30, 60) / 10.0f;
-            RegenerarRaio(r, eFaltante.diametro_maximo/2.0f, 8, 12, escala);
-            eFaltante.raios.push_back(r);
-        }
-
-        for(int k=0; k<600; k++) {
-            ParticulaAura p;
-            p.vida = 0; p.offset = {0,0}; p.velocidade = {0,0}; p.cor = WHITE; p.negativa = false;
-            p.tam = (float)GetRandomValue(30, 60) / 10.0f;
-            eFaltante.particulas_ki.push_back(p);
-        }
-
-        eFaltante.tam_base = GetRandomValue(5, 9);
-        eFaltante.tam_nucleo = eFaltante.tam_base;
-        eFaltante.crescendo = true;
-        eFaltante.limite_anim = GetRandomValue(5, 15);
-        eFaltante.timer_anim = 0;
-        eFaltante.alcance_cresc = 3;
-
-        galaxia.push_back(eFaltante);
-    }
-
-    // --- DEUSES GUARDIOES DO CENTRO (ANEL EXTERNO) ---
-    float angulosDeusesCentro[5] = { 0.0f, 72.0f, 144.0f, 216.0f, 288.0f };
-    float raioDeusesCentro = raioSpawnCentro * 2.0f; // O dobro da distância das entidades
-    
-    for (int i = 0; i < 5; i++) {
-        Estrela eDeus = {}; 
-        
-        // Defasagem de +36 graus para que os Deuses fiquem intercalados com as Entidades
-        float radianos = (angulosDeusesCentro[i] + 36.0f) * DEG2RAD;
-        eDeus.pos = { cosf(radianos) * raioDeusesCentro, sinf(radianos) * raioDeusesCentro };
-        eDeus.escala_minima = 0.5f;
-
-        // FORÇA O SPAWN
-        do {
-            ConfigurarBoss(eDeus);
-        } while (!eDeus.tem_chefe);
-        
-        // Atributos fixos de Tier 5 (Deus)
-        eDeus.nivel_maximo = GetRandomValue(2000001, 2500000); 
-        eDeus.diametro_maximo = (float)GetRandomValue(500, 700);
-        eDeus.nome_chefe = "DEUS " + GerarNomeProcedural();
-        eDeus.eh_lendario = true;
-        
-        // Recalcula KI base
-        eDeus.nivel_base = (int)(eDeus.nivel_maximo * eDeus.escala_minima);
-        eDeus.nivel_atual = eDeus.nivel_base;
-
-        // Raios (Especificação de Deus: 8 raios, espessura 1.0f)
-        for(int k=0; k<8; k++) { 
-            Raio r;
-            RegenerarRaio(r, eDeus.diametro_maximo/2.0f, 6, 10, 1.0f);
-            eDeus.raios.push_back(r);
-        }
-
-        // Partículas (Especificação de Deus: 250 partículas)
-        for(int k=0; k<250; k++) {
-            ParticulaAura p;
-            p.vida = 0; p.offset = {0,0}; p.velocidade = {0,0}; p.cor = WHITE; p.negativa = false;
-            p.tam = (float)GetRandomValue(30, 60) / 10.0f;
-            eDeus.particulas_ki.push_back(p);
-        }
-
-        // Animação básica da estrela física
-        eDeus.tam_base = GetRandomValue(5, 9);
-        eDeus.tam_nucleo = eDeus.tam_base;
-        eDeus.crescendo = true;
-        eDeus.limite_anim = GetRandomValue(5, 15);
-        eDeus.timer_anim = 0;
-        eDeus.alcance_cresc = 3;
-
-        galaxia.push_back(eDeus);
-    }
-
-    // 3. LOOP DE GERAÇÃO (Lendo apenas a Lógica)
-    const int TENTATIVAS = 15000;
-    int estrelasCriadas = 0;
-
-    for (int i = 0; i < TENTATIVAS; i++) {
-        if (estrelasCriadas >= LIMITE_ESTRELAS) break;
-
-        Estrela nova_estrela;
-        bool spawnar = false;
-
-        // Sorteia pixel
-        int xImg = GetRandomValue(0, 1199);
-        int yImg = GetRandomValue(0, 699);
-
-        // Define posição no mundo (Escala 5x)
-        nova_estrela.pos.x = (xImg * 5.0f) - 3000.0f;
-        nova_estrela.pos.y = (yImg * 5.0f) - 1750.0f;
-
-        // LER APENAS O PIXEL DE LÓGICA
-        Color pLogica = GetImageColor(imgLogica, xImg, yImg);
-
-        // --- REGRA 1: DEUSES (Vermelho Puro) ---
-        if (pLogica.r > 200 && pLogica.g < 50 && pLogica.b < 50) { 
-            bool espacoLivre = true;
-
-            // Verifica a distância matemática contra todos os deuses já criados
-            for (const auto& posSalva : posicoesDeuses) {
-                float dx = nova_estrela.pos.x - posSalva.x;
-                float dy = nova_estrela.pos.y - posSalva.y;
-                float distSq = (dx * dx) + (dy * dy);
-                
-                if (distSq < (RAIO_EXCLUSAO_DEUS * RAIO_EXCLUSAO_DEUS)) {
-                    espacoLivre = false; // Tem um deus a menos de 50px daqui!
-                    break;
-                }
-            }
-
-            if (espacoLivre) {
-                spawnar = true;
-                posicoesDeuses.push_back(nova_estrela.pos); // Salva a posição na lista
-            } else {
-                spawnar = false; // Cancela o spawn, forçando a procurar outro pixel
-            }
-
-            if (spawnar) {
-                // FORÇA O SPAWN: Roda a roleta até tirar a sorte de vir um chefe
-                do {
-                    ConfigurarBoss(nova_estrela); 
-                } while (!nova_estrela.tem_chefe);
-                
-                // Stats
-                nova_estrela.nivel_maximo = GetRandomValue(2000001, 2500000);
-                nova_estrela.diametro_maximo = (float)GetRandomValue(500, 700);
-                nova_estrela.nome_chefe = "DEUS " + GerarNomeProcedural();
-
-                // RECALCULA O KI BASE (Para a barra de vida não bugar com o novo nivel maximo)
-                nova_estrela.nivel_base = (int)(nova_estrela.nivel_maximo * nova_estrela.escala_minima);
-                nova_estrela.nivel_atual = nova_estrela.nivel_base;
-                
-                // --- CORREÇÃO: RAIOS PARA TIER 5 ---
-                nova_estrela.raios.clear(); // Limpa lixo anterior
-                for(int k=0; k<8; k++) { // 8 Raios
-                    Raio r;
-                    // Escala 1.0f (Normal), mas complexidade alta (6-10 segmentos)
-                    RegenerarRaio(r, nova_estrela.diametro_maximo/2.0f, 6, 10, 1.0f);
-                    nova_estrela.raios.push_back(r);
-                }
-
-                // Partículas normais
-                nova_estrela.particulas_ki.clear();
-                int qtd_part = 250; 
-                for(int k=0; k<qtd_part; k++) {
-                    ParticulaAura p;
-                    p.vida = 0; p.offset = {0,0}; p.velocidade = {0,0}; p.cor = WHITE; p.negativa = false;
-                    p.tam = (float)GetRandomValue(30, 60) / 10.0f;
-                    nova_estrela.particulas_ki.push_back(p);
-                }
-            }
-        }
-        // --- REGRA 2: ENTIDADES (Branco Puro) ---
-        else if (pLogica.r > 200 && pLogica.g > 200 && pLogica.b > 200) {
+        // --- ENTIDADES GUARDIÕES DO CENTRO (POSIÇÕES FIXAS E ORGANIZADAS) ---
+        float angulosCentro[4] = { 0.0f, 90.0f, 180.0f, 270.0f };
+        for (int i = 0; i < 4; i++) {
+            Estrela eFaltante = {}; 
             
-            // Como não tem mais centro branco na imagem, qualquer pixel branco achado é um dos 4 cantos.
-            if      (nova_estrela.pos.x > 0 && nova_estrela.pos.y < 0 && !bossQ1) { spawnar = true; bossQ1 = true; } 
-            else if (nova_estrela.pos.x < 0 && nova_estrela.pos.y < 0 && !bossQ2) { spawnar = true; bossQ2 = true; } 
-            else if (nova_estrela.pos.x < 0 && nova_estrela.pos.y > 0 && !bossQ3) { spawnar = true; bossQ3 = true; } 
-            else if (nova_estrela.pos.x > 0 && nova_estrela.pos.y > 0 && !bossQ4) { spawnar = true; bossQ4 = true; }
+            float radianos = angulosCentro[i] * DEG2RAD;
+            eFaltante.pos = { cosf(radianos) * raioSpawnCentro, sinf(radianos) * raioSpawnCentro };
+            eFaltante.escala_minima = 0.5f;
 
-            if (spawnar) {
-                // FORÇA O SPAWN: Roda a roleta até tirar a sorte de vir um chefe
-                do {
-                    ConfigurarBoss(nova_estrela);
-                } while (!nova_estrela.tem_chefe);
-                
-                // Stats
-                nova_estrela.nivel_maximo = GetRandomValue(2500001, 3000000);
-                nova_estrela.diametro_maximo = (float)GetRandomValue(700, 1000);
-                nova_estrela.nome_chefe = "ENTIDADE " + GerarNomeProcedural();
-                nova_estrela.eh_lendario = true;
-
-                // RECALCULA O KI BASE
-                nova_estrela.nivel_base = (int)(nova_estrela.nivel_maximo * nova_estrela.escala_minima);
-                nova_estrela.nivel_atual = nova_estrela.nivel_base;
-
-                nova_estrela.raios.clear();
-                for(int k=0; k<12; k++) { 
-                    Raio r;
-                    float escala_longa = (float)GetRandomValue(30, 60) / 10.0f;
-                    RegenerarRaio(r, nova_estrela.diametro_maximo/2.0f, 8, 12, escala_longa);
-                    nova_estrela.raios.push_back(r);
-                }
-
-                nova_estrela.particulas_ki.clear();
-                for(int k=0; k<600; k++) {
-                    ParticulaAura p;
-                    p.vida = 0; p.offset = {0,0}; p.velocidade = {0,0}; p.cor = WHITE; p.negativa = false;
-                    p.tam = (float)GetRandomValue(30, 60) / 10.0f;
-                    nova_estrela.particulas_ki.push_back(p);
-                }
-            }
-        }
-        // --- REGRA 3: ESTRELAS COMUNS (Verde #00FF42) ---
-        // O Hex #00FF42 equivale a RGB(0, 255, 66)
-        // Lógica: Muito Verde (>200), Pouco Vermelho (<100)
-        else if (pLogica.g > 200 && pLogica.r < 100) {
-            spawnar = true;
-            ConfigurarBoss(nova_estrela); // Roda a roleta normal (maioria fraca, alguns bosses médios)
-            
-            // TRAVA DE SEGURANÇA:
-            // Se cair num braço verde, NÃO pode ser Deus nem Entidade (Tier 5 ou 6).
-            // Se a sorte gerou um muito forte, rebaixa para Tier 4 (General).
-            if (nova_estrela.nivel_maximo > 2000000) {
-                nova_estrela.nivel_maximo = GetRandomValue(1000000, 1500000);
-                nova_estrela.diametro_maximo = (float)GetRandomValue(250, 400);
-                nova_estrela.eh_lendario = false;
-                nova_estrela.nome_chefe = "GENERAL " + GerarNomeProcedural();
-            }
-        }
-
-        if (spawnar) {
-            // Animação básica
-            nova_estrela.tam_base = GetRandomValue(5, 9);
-            nova_estrela.tam_nucleo = nova_estrela.tam_base;
-            nova_estrela.crescendo = true;
-            nova_estrela.limite_anim = GetRandomValue(5, 15);
-            nova_estrela.timer_anim = 0;
-            nova_estrela.alcance_cresc = 3;
-            
-            // --- NOVA CHECAGEM DE COLISÃO COM ZONA DE ISOLAMENTO ---
-            bool colidiu = false;
-            for(const auto& e : galaxia) {
-                float dx = e.pos.x - nova_estrela.pos.x;
-                float dy = e.pos.y - nova_estrela.pos.y;
-                float distSq = dx*dx + dy*dy;
-                
-                float raioImpedimento = 40.0f; // Distância padrão entre estrelas comuns
-                
-                // Se a estrela que já está ali for Deus ou Entidade (Tier 5 ou 6), exige mais espaço!
-                if (e.tem_chefe && e.nivel_maximo > 2000000) {
-                    raioImpedimento = 80.0f; // Cria um verdadeiro vazio ao redor deles
-                }
-
-                if (distSq < (raioImpedimento * raioImpedimento)) {
-                    colidiu = true; 
-                    break; 
-                }
-            }
-
-            if (!colidiu) {
-                galaxia.push_back(nova_estrela);
-                estrelasCriadas++;
-            }
-        }
-    }
-
-    // --- GARANTIA DOS GUARDIÕES DE QUADRANTE ---
-    struct QuadranteFaltante { bool* flag; Vector2 pos; };
-    QuadranteFaltante checagemQ[] = {
-        { &bossQ1, {  2500.0f, -1400.0f } }, 
-        { &bossQ2, { -2500.0f, -1400.0f } }, 
-        { &bossQ3, { -2500.0f,  1400.0f } }, 
-        { &bossQ4, {  2500.0f,  1400.0f } }  
-    };
-
-    for (int q = 0; q < 4; q++) {
-        if (!*(checagemQ[q].flag)) {
-            Estrela eFaltante = {}; // Limpa memória residual
-            eFaltante.pos = checagemQ[q].pos;
-            eFaltante.escala_minima = 0.5f; 
-            
             do {
                 ConfigurarBoss(eFaltante);
             } while (!eFaltante.tem_chefe);
@@ -860,55 +780,338 @@ int main(void)
 
             galaxia.push_back(eFaltante);
         }
-    }
 
-    // --- GERAÇÃO DE ZONAS PIRATAS  ---
-    std::vector<ZonaPirata> zonasPiratas;
-    const int QTD_PIRATAS = 20; 
-    int piratasCriados = 0;
-    int tentativasPiratas = 0; // Trava de segurança para não rodar infinito se o mapa estiver vazio
-
-    while (piratasCriados < QTD_PIRATAS && tentativasPiratas < 50000) {
-        int xImg = GetRandomValue(0, 1199);
-        int yImg = GetRandomValue(0, 699);
+        // --- DEUSES GUARDIOES DO CENTRO (ANEL EXTERNO) ---
+        float angulosDeusesCentro[5] = { 0.0f, 72.0f, 144.0f, 216.0f, 288.0f };
+        float raioDeusesCentro = raioSpawnCentro * 2.0f; // O dobro da distância das entidades
         
-        Color pCor = GetImageColor(imgPirata, xImg, yImg);
+        for (int i = 0; i < 5; i++) {
+            Estrela eDeus = {}; 
+            
+            // Defasagem de +36 graus para que os Deuses fiquem intercalados com as Entidades
+            float radianos = (angulosDeusesCentro[i] + 36.0f) * DEG2RAD;
+            eDeus.pos = { cosf(radianos) * raioDeusesCentro, sinf(radianos) * raioDeusesCentro };
+            eDeus.escala_minima = 0.5f;
 
-        // Tolerância para o Roxo (Alvo: 163, 73, 164)
-        if (pCor.r > 140 && pCor.r < 190 &&
-            pCor.g > 50  && pCor.g < 100 &&
-            pCor.b > 140 && pCor.b < 190) {
+            // FORÇA O SPAWN
+            do {
+                ConfigurarBoss(eDeus);
+            } while (!eDeus.tem_chefe);
             
-            ZonaPirata p;
-            // Escala 5x igual as estrelas
-            p.pos.x = (xImg * 5.0f) - 3000.0f;
-            p.pos.y = (yImg * 5.0f) - 1750.0f;
+            // Atributos fixos de Tier 5 (Deus)
+            eDeus.nivel_maximo = GetRandomValue(2000001, 2500000); 
+            eDeus.diametro_maximo = (float)GetRandomValue(500, 700);
+            eDeus.nome_chefe = "DEUS " + GerarNomeProcedural();
+            eDeus.eh_lendario = true;
             
-            // Tamanho reduzido pela metade conforme pedido
-            p.raio = (float)GetRandomValue(75, 175); 
-            
-            zonasPiratas.push_back(p);
-            piratasCriados++;
+            // Recalcula KI base
+            eDeus.nivel_base = (int)(eDeus.nivel_maximo * eDeus.escala_minima);
+            eDeus.nivel_atual = eDeus.nivel_base;
+
+            // Raios (Especificação de Deus: 8 raios, espessura 1.0f)
+            for(int k=0; k<8; k++) { 
+                Raio r;
+                RegenerarRaio(r, eDeus.diametro_maximo/2.0f, 6, 10, 1.0f);
+                eDeus.raios.push_back(r);
+            }
+
+            // Partículas (Especificação de Deus: 250 partículas)
+            for(int k=0; k<250; k++) {
+                ParticulaAura p;
+                p.vida = 0; p.offset = {0,0}; p.velocidade = {0,0}; p.cor = WHITE; p.negativa = false;
+                p.tam = (float)GetRandomValue(30, 60) / 10.0f;
+                eDeus.particulas_ki.push_back(p);
+            }
+
+            // Animação básica da estrela física
+            eDeus.tam_base = GetRandomValue(5, 9);
+            eDeus.tam_nucleo = eDeus.tam_base;
+            eDeus.crescendo = true;
+            eDeus.limite_anim = GetRandomValue(5, 15);
+            eDeus.timer_anim = 0;
+            eDeus.alcance_cresc = 3;
+
+            galaxia.push_back(eDeus);
         }
-        tentativasPiratas++;
+
+        // 3. LOOP DE GERAÇÃO (Lendo apenas a Lógica)
+        const int TENTATIVAS = 15000;
+        int estrelasCriadas = 0;
+
+        for (int i = 0; i < TENTATIVAS; i++) {
+            if (estrelasCriadas >= LIMITE_ESTRELAS) break;
+
+            Estrela nova_estrela;
+            bool spawnar = false;
+
+            // Sorteia pixel
+            int xImg = GetRandomValue(0, 1199);
+            int yImg = GetRandomValue(0, 699);
+
+            // Define posição no mundo (Escala 5x)
+            nova_estrela.pos.x = (xImg * 5.0f) - 3000.0f;
+            nova_estrela.pos.y = (yImg * 5.0f) - 1750.0f;
+
+            // LER APENAS O PIXEL DE LÓGICA
+            Color pLogica = GetImageColor(imgLogica, xImg, yImg);
+
+            // --- REGRA 1: DEUSES (Vermelho Puro) ---
+            if (pLogica.r > 200 && pLogica.g < 50 && pLogica.b < 50) { 
+                bool espacoLivre = true;
+
+                // Verifica a distância matemática contra todos os deuses já criados
+                for (const auto& posSalva : posicoesDeuses) {
+                    float dx = nova_estrela.pos.x - posSalva.x;
+                    float dy = nova_estrela.pos.y - posSalva.y;
+                    float distSq = (dx * dx) + (dy * dy);
+                    
+                    if (distSq < (RAIO_EXCLUSAO_DEUS * RAIO_EXCLUSAO_DEUS)) {
+                        espacoLivre = false; // Tem um deus a menos de 50px daqui!
+                        break;
+                    }
+                }
+
+                if (espacoLivre) {
+                    spawnar = true;
+                    posicoesDeuses.push_back(nova_estrela.pos); // Salva a posição na lista
+                } else {
+                    spawnar = false; // Cancela o spawn, forçando a procurar outro pixel
+                }
+
+                if (spawnar) {
+                    // FORÇA O SPAWN: Roda a roleta até tirar a sorte de vir um chefe
+                    do {
+                        ConfigurarBoss(nova_estrela); 
+                    } while (!nova_estrela.tem_chefe);
+                    
+                    // Stats
+                    nova_estrela.nivel_maximo = GetRandomValue(2000001, 2500000);
+                    nova_estrela.diametro_maximo = (float)GetRandomValue(500, 700);
+                    nova_estrela.nome_chefe = "DEUS " + GerarNomeProcedural();
+
+                    // RECALCULA O KI BASE (Para a barra de vida não bugar com o novo nivel maximo)
+                    nova_estrela.nivel_base = (int)(nova_estrela.nivel_maximo * nova_estrela.escala_minima);
+                    nova_estrela.nivel_atual = nova_estrela.nivel_base;
+                    
+                    // --- CORREÇÃO: RAIOS PARA TIER 5 ---
+                    nova_estrela.raios.clear(); // Limpa lixo anterior
+                    for(int k=0; k<8; k++) { // 8 Raios
+                        Raio r;
+                        // Escala 1.0f (Normal), mas complexidade alta (6-10 segmentos)
+                        RegenerarRaio(r, nova_estrela.diametro_maximo/2.0f, 6, 10, 1.0f);
+                        nova_estrela.raios.push_back(r);
+                    }
+
+                    // Partículas normais
+                    nova_estrela.particulas_ki.clear();
+                    int qtd_part = 250; 
+                    for(int k=0; k<qtd_part; k++) {
+                        ParticulaAura p;
+                        p.vida = 0; p.offset = {0,0}; p.velocidade = {0,0}; p.cor = WHITE; p.negativa = false;
+                        p.tam = (float)GetRandomValue(30, 60) / 10.0f;
+                        nova_estrela.particulas_ki.push_back(p);
+                    }
+                }
+            }
+            // --- REGRA 2: ENTIDADES (Branco Puro) ---
+            else if (pLogica.r > 200 && pLogica.g > 200 && pLogica.b > 200) {
+                
+                // Como não tem mais centro branco na imagem, qualquer pixel branco achado é um dos 4 cantos.
+                if      (nova_estrela.pos.x > 0 && nova_estrela.pos.y < 0 && !bossQ1) { spawnar = true; bossQ1 = true; } 
+                else if (nova_estrela.pos.x < 0 && nova_estrela.pos.y < 0 && !bossQ2) { spawnar = true; bossQ2 = true; } 
+                else if (nova_estrela.pos.x < 0 && nova_estrela.pos.y > 0 && !bossQ3) { spawnar = true; bossQ3 = true; } 
+                else if (nova_estrela.pos.x > 0 && nova_estrela.pos.y > 0 && !bossQ4) { spawnar = true; bossQ4 = true; }
+
+                if (spawnar) {
+                    // FORÇA O SPAWN: Roda a roleta até tirar a sorte de vir um chefe
+                    do {
+                        ConfigurarBoss(nova_estrela);
+                    } while (!nova_estrela.tem_chefe);
+                    
+                    // Stats
+                    nova_estrela.nivel_maximo = GetRandomValue(2500001, 3000000);
+                    nova_estrela.diametro_maximo = (float)GetRandomValue(700, 1000);
+                    nova_estrela.nome_chefe = "ENTIDADE " + GerarNomeProcedural();
+                    nova_estrela.eh_lendario = true;
+
+                    // RECALCULA O KI BASE
+                    nova_estrela.nivel_base = (int)(nova_estrela.nivel_maximo * nova_estrela.escala_minima);
+                    nova_estrela.nivel_atual = nova_estrela.nivel_base;
+
+                    nova_estrela.raios.clear();
+                    for(int k=0; k<12; k++) { 
+                        Raio r;
+                        float escala_longa = (float)GetRandomValue(30, 60) / 10.0f;
+                        RegenerarRaio(r, nova_estrela.diametro_maximo/2.0f, 8, 12, escala_longa);
+                        nova_estrela.raios.push_back(r);
+                    }
+
+                    nova_estrela.particulas_ki.clear();
+                    for(int k=0; k<600; k++) {
+                        ParticulaAura p;
+                        p.vida = 0; p.offset = {0,0}; p.velocidade = {0,0}; p.cor = WHITE; p.negativa = false;
+                        p.tam = (float)GetRandomValue(30, 60) / 10.0f;
+                        nova_estrela.particulas_ki.push_back(p);
+                    }
+                }
+            }
+            // --- REGRA 3: ESTRELAS COMUNS (Verde #00FF42) ---
+            // O Hex #00FF42 equivale a RGB(0, 255, 66)
+            // Lógica: Muito Verde (>200), Pouco Vermelho (<100)
+            else if (pLogica.g > 200 && pLogica.r < 100) {
+                spawnar = true;
+                ConfigurarBoss(nova_estrela); // Roda a roleta normal (maioria fraca, alguns bosses médios)
+                
+                // TRAVA DE SEGURANÇA:
+                // Se cair num braço verde, NÃO pode ser Deus nem Entidade (Tier 5 ou 6).
+                // Se a sorte gerou um muito forte, rebaixa para Tier 4 (General).
+                if (nova_estrela.nivel_maximo > 2000000) {
+                    nova_estrela.nivel_maximo = GetRandomValue(1000000, 1500000);
+                    nova_estrela.diametro_maximo = (float)GetRandomValue(250, 400);
+                    nova_estrela.eh_lendario = false;
+                    nova_estrela.nome_chefe = "GENERAL " + GerarNomeProcedural();
+                }
+            }
+
+            if (spawnar) {
+                // Animação básica
+                nova_estrela.tam_base = GetRandomValue(5, 9);
+                nova_estrela.tam_nucleo = nova_estrela.tam_base;
+                nova_estrela.crescendo = true;
+                nova_estrela.limite_anim = GetRandomValue(5, 15);
+                nova_estrela.timer_anim = 0;
+                nova_estrela.alcance_cresc = 3;
+                
+                // --- NOVA CHECAGEM DE COLISÃO COM ZONA DE ISOLAMENTO ---
+                bool colidiu = false;
+                for(const auto& e : galaxia) {
+                    float dx = e.pos.x - nova_estrela.pos.x;
+                    float dy = e.pos.y - nova_estrela.pos.y;
+                    float distSq = dx*dx + dy*dy;
+                    
+                    float raioImpedimento = 40.0f; // Distância padrão entre estrelas comuns
+                    
+                    // Se a estrela que já está ali for Deus ou Entidade (Tier 5 ou 6), exige mais espaço!
+                    if (e.tem_chefe && e.nivel_maximo > 2000000) {
+                        raioImpedimento = 80.0f; // Cria um verdadeiro vazio ao redor deles
+                    }
+
+                    if (distSq < (raioImpedimento * raioImpedimento)) {
+                        colidiu = true; 
+                        break; 
+                    }
+                }
+
+                if (!colidiu) {
+                    galaxia.push_back(nova_estrela);
+                    estrelasCriadas++;
+                }
+            }
+        }
+
+        // --- GARANTIA DOS GUARDIÕES DE QUADRANTE ---
+        struct QuadranteFaltante { bool* flag; Vector2 pos; };
+        QuadranteFaltante checagemQ[] = {
+            { &bossQ1, {  2500.0f, -1400.0f } }, 
+            { &bossQ2, { -2500.0f, -1400.0f } }, 
+            { &bossQ3, { -2500.0f,  1400.0f } }, 
+            { &bossQ4, {  2500.0f,  1400.0f } }  
+        };
+
+        for (int q = 0; q < 4; q++) {
+            if (!*(checagemQ[q].flag)) {
+                Estrela eFaltante = {}; // Limpa memória residual
+                eFaltante.pos = checagemQ[q].pos;
+                eFaltante.escala_minima = 0.5f; 
+                
+                do {
+                    ConfigurarBoss(eFaltante);
+                } while (!eFaltante.tem_chefe);
+                
+                eFaltante.nivel_maximo = GetRandomValue(2500001, 3000000);
+                eFaltante.diametro_maximo = (float)GetRandomValue(700, 1000);
+                eFaltante.nome_chefe = "ENTIDADE " + GerarNomeProcedural();
+                eFaltante.eh_lendario = true;
+                eFaltante.nivel_base = (int)(eFaltante.nivel_maximo * eFaltante.escala_minima);
+                eFaltante.nivel_atual = eFaltante.nivel_base;
+
+                for(int k=0; k<12; k++) { 
+                    Raio r;
+                    float escala = (float)GetRandomValue(30, 60) / 10.0f;
+                    RegenerarRaio(r, eFaltante.diametro_maximo/2.0f, 8, 12, escala);
+                    eFaltante.raios.push_back(r);
+                }
+
+                for(int k=0; k<600; k++) {
+                    ParticulaAura p;
+                    p.vida = 0; p.offset = {0,0}; p.velocidade = {0,0}; p.cor = WHITE; p.negativa = false;
+                    p.tam = (float)GetRandomValue(30, 60) / 10.0f;
+                    eFaltante.particulas_ki.push_back(p);
+                }
+
+                eFaltante.tam_base = GetRandomValue(5, 9);
+                eFaltante.tam_nucleo = eFaltante.tam_base;
+                eFaltante.crescendo = true;
+                eFaltante.limite_anim = GetRandomValue(5, 15);
+                eFaltante.timer_anim = 0;
+                eFaltante.alcance_cresc = 3;
+
+                galaxia.push_back(eFaltante);
+            }
+        }
+
+        // --- GERAÇÃO DE ZONAS PIRATAS  ---
+        std::vector<ZonaPirata> zonasPiratas;
+        const int QTD_PIRATAS = 20; 
+        int piratasCriados = 0;
+        int tentativasPiratas = 0; // Trava de segurança para não rodar infinito se o mapa estiver vazio
+
+        while (piratasCriados < QTD_PIRATAS && tentativasPiratas < 50000) {
+            int xImg = GetRandomValue(0, 1199);
+            int yImg = GetRandomValue(0, 699);
+            
+            Color pCor = GetImageColor(imgPirata, xImg, yImg);
+
+            // Tolerância para o Roxo (Alvo: 163, 73, 164)
+            if (pCor.r > 140 && pCor.r < 190 &&
+                pCor.g > 50  && pCor.g < 100 &&
+                pCor.b > 140 && pCor.b < 190) {
+                
+                ZonaPirata p;
+                // Escala 5x igual as estrelas
+                p.pos.x = (xImg * 5.0f) - 3000.0f;
+                p.pos.y = (yImg * 5.0f) - 1750.0f;
+                
+                // Tamanho reduzido pela metade conforme pedido
+                p.raio = (float)GetRandomValue(75, 175); 
+                
+                zonasPiratas.push_back(p);
+                piratasCriados++;
+            }
+            tentativasPiratas++;
+        }
+    }
+    else {
+        // --- LOAD GAME ---
+        bool carregou = CarregarJogo(galaxia, jogador, zonasMeteoros, zonasPiratas, 
+                     estrelaAtualPlayer, estrelaCasaPlayer, spawnDefinido,
+                     mostrarVisual, mostrarPosto, mostrarGuerreiros, 
+                     mostrarDeuses, mostrarEntidades, mostrarEstrelasNormais);
+                     
+        // Restaura a posição da câmera e da nave se o jogador já tiver uma base salva
+        if (carregou && spawnDefinido && estrelaAtualPlayer >= 0 && estrelaAtualPlayer < galaxia.size()) {
+            posNaveAtual = galaxia[estrelaAtualPlayer].pos;
+            jogador->minhaNave->posicaoMapa = posNaveAtual;
+            camera.target = posNaveAtual;
+            focoCamera = -1;
+            cameraTravada = true;
+        }
     }
 
-    // Limpa a memória das imagens (A textura de fundo continua na GPU)
+    // Limpa a memória das imagens visuais
+    // OBS: A imgLogica NÃO PODE ser apagada aqui, pois ela escaneia as rotas de viagem depois!
     UnloadImage(imgVisual);
     UnloadImage(imgPirata);
-
-    // --- INICIALIZAÇÃO DO PLAYER ---
-    Player* jogador = new Player("Kreits"); // Instancia o Player e a Nave
-    bool spawnDefinido = false; // Controla se o jogador já escolheu onde começar
-    int estrelaAtualPlayer = -1;
-    int estrelaCasaPlayer = -1;
-    float timerPingPlayer = 0.0f; 
-    float timerPingCasa = 0.0f;
-
-    // --- NAVEGAÇÃO RÁPIDA (SPORE) ---
-    Vector2 posNaveAtual = {0, 0};
-    bool animandoViagem = false;
-    int estrelaDestinoCurto = -1;
     
     // --- CONTROLE VISUAL DE KI DO JOGADOR NO MAPA ---
     EstadoKi playerEstadoKi = ESCONDIDO;
@@ -1037,7 +1240,6 @@ int main(void)
     }
 
     // --- GERAÇÃO DE ZONAS DE METEOR ZONES FIXAS ---
-    std::vector<ZonaMeteoro> zonasMeteoros;
     const int QTD_ZONAS = 30; // Ajuste a quantidade de áreas perigosas
     for (int i = 0; i < QTD_ZONAS; i++) {
         ZonaMeteoro z;
@@ -1049,558 +1251,599 @@ int main(void)
 
     bool iniciarViagemExecutavel = false; // Flag para fechar o mapa e abrir o minigame
 
-    while (!WindowShouldClose() && !iniciarViagemExecutavel) {
-        
-        // =============================================================
-        // --- INPUT & CÂMERA (CONTROLES DE MAPA TÁTICO) ---
-        // =============================================================
-        
-        // 0. ANCORA DEFINITIVA (Impede o mouse de mover a tela sozinho)
-        camera.offset = { screenWidth / 2.0f, screenHeight / 2.0f };
+    bool isPaused = false;
+    int pauseSelection = 0; // 0 = CONTINUE, 1 = QUIT
+    bool quitGame = false;
 
-        // 1. ZOOM (Scroll + Teclado)
-        float wheel = GetMouseWheelMove();
-        if (IsKeyDown(KEY_UP)) wheel = 1.0f;
-        if (IsKeyDown(KEY_DOWN)) wheel = -1.0f;
+    while (!quitGame && !WindowShouldClose() && !iniciarViagemExecutavel) {
 
-        if (wheel != 0.0f) {
-            // Se estiver rastreando algo (Travada), o zoom obrigatoriamente foca no centro.
-            // Se estiver livre, o zoom foca onde o mouse está apontando.
-            Vector2 mousePos = GetMousePosition();
-            if (cameraTravada || IsKeyDown(KEY_UP) || IsKeyDown(KEY_DOWN)) {
-                mousePos = { screenWidth / 2.0f, screenHeight / 2.0f };
+        // =============================================================
+        // --- LÓGICA DE PAUSE ---
+        // =============================================================
+
+        int indexEstrelaFocada = -1;
+
+        if (IsKeyPressed(KEY_ESCAPE)) {
+            isPaused = !isPaused;
+            pauseSelection = 0; // Sempre reseta pro CONTINUE ao abrir
+        }
+
+        if (isPaused) {
+            if (IsKeyPressed(KEY_DOWN) || IsKeyPressed(KEY_S)) {
+                pauseSelection++;
+                if (pauseSelection > 2) pauseSelection = 0; 
+            }
+            if (IsKeyPressed(KEY_UP) || IsKeyPressed(KEY_W)) {
+                pauseSelection--;
+                if (pauseSelection < 0) pauseSelection = 2;
             }
 
-            Vector2 mouseWorldBefore = GetScreenToWorld2D(mousePos, camera);
-
-            float scaleFactor = 1.0f + (0.05f * fabsf(wheel));
-            if (wheel < 0) scaleFactor = 1.0f / scaleFactor;
-
-            float piorCenarioZoom = (float)screenHeight / 6000.0f; 
-            float minZoom = piorCenarioZoom * 0.8f; 
-            camera.zoom = Clamp(camera.zoom * scaleFactor, minZoom, 3.0f);
-
-            Vector2 mouseWorldAfter = GetScreenToWorld2D(mousePos, camera);
-
-            // SÓ desliza a tela se a câmera estiver LIVRE. 
-            // Se estiver travada, o rastreio ali embaixo assume o controle e evita o bug.
-            if (!cameraTravada) {
-                camera.target.x += (mouseWorldBefore.x - mouseWorldAfter.x);
-                camera.target.y += (mouseWorldBefore.y - mouseWorldAfter.y);
+            if (IsKeyPressed(KEY_ENTER)) {
+                if (pauseSelection == 0) isPaused = false;
+                else if (pauseSelection == 1) {
+                    SalvarJogo(galaxia, jogador, zonasMeteoros, zonasPiratas, 
+                               estrelaAtualPlayer, estrelaCasaPlayer, spawnDefinido,
+                               mostrarVisual, mostrarPosto, mostrarGuerreiros, 
+                               mostrarDeuses, mostrarEntidades, mostrarEstrelasNormais);
+                    isPaused = false; 
+                }
+                else if (pauseSelection == 2) quitGame = true;
             }
         }
 
-        // 2. PAN (WASD) - Move e destrava a câmera instantaneamente
-        float moveSpeed = 15.0f / camera.zoom; 
-        if (IsKeyDown(KEY_W)) { camera.target.y -= moveSpeed; cameraTravada = false; }
-        if (IsKeyDown(KEY_S)) { camera.target.y += moveSpeed; cameraTravada = false; }
-        if (IsKeyDown(KEY_A)) { camera.target.x -= moveSpeed; cameraTravada = false; }
-        if (IsKeyDown(KEY_D)) { camera.target.x += moveSpeed; cameraTravada = false; }
-
-        // Ping do Player (Tecla P) - Trava a câmera de volta na Nave
-        if (IsKeyPressed(KEY_P)) { 
-            timerPingPlayer = 3.0f; // Ativa o sinalizador por 3 segundos
-            cameraTravada = true;
-            focoCamera = -1; // -1 = Nave do Player
-        }
-
-        // --- INPUT CASA (Tecla H) ---
-        if (IsKeyPressed(KEY_H)) { 
-            timerPingCasa = 3.0f; // Ativa o radar da casa por 3 segundos
-        }
-
-        // Atualização dos timers
-        if (timerPingPlayer > 0) timerPingPlayer -= GetFrameTime();
-        if (timerPingCasa > 0) timerPingCasa -= GetFrameTime(); 
-
-        // --- SISTEMA DE RASTREIO ROTACIONAL ---
-        if (cameraTravada) {
-            float piorCenarioZoom = (float)screenHeight / 6000.0f; 
-            float minZoom = piorCenarioZoom * 0.8f; 
+        if (!isPaused) {
+        
+            // =============================================================
+            // --- INPUT & CÂMERA (CONTROLES DE MAPA TÁTICO) ---
+            // =============================================================
             
-            // Só rastreia e move a tela se o jogador deu zoom in (não está vendo a galáxia toda)
-            if (camera.zoom > minZoom + 0.1f) {
-                if (focoCamera == -1) {
-                    camera.target = posNaveAtual; // Gruda e segue o jogador
-                } else if (focoCamera >= 0 && focoCamera < galaxia.size()) {
-                    camera.target = galaxia[focoCamera].pos; // Gruda e segue a estrela clicada
+            // 0. ANCORA DEFINITIVA (Impede o mouse de mover a tela sozinho)
+            camera.offset = { screenWidth / 2.0f, screenHeight / 2.0f };
+
+            // 1. ZOOM (Scroll + Teclado)
+            float wheel = GetMouseWheelMove();
+            if (IsKeyDown(KEY_UP)) wheel = 1.0f;
+            if (IsKeyDown(KEY_DOWN)) wheel = -1.0f;
+
+            if (wheel != 0.0f) {
+                // Se estiver rastreando algo (Travada), o zoom obrigatoriamente foca no centro.
+                // Se estiver livre, o zoom foca onde o mouse está apontando.
+                Vector2 mousePos = GetMousePosition();
+                if (cameraTravada || IsKeyDown(KEY_UP) || IsKeyDown(KEY_DOWN)) {
+                    mousePos = { screenWidth / 2.0f, screenHeight / 2.0f };
+                }
+
+                Vector2 mouseWorldBefore = GetScreenToWorld2D(mousePos, camera);
+
+                float scaleFactor = 1.0f + (0.05f * fabsf(wheel));
+                if (wheel < 0) scaleFactor = 1.0f / scaleFactor;
+
+                float piorCenarioZoom = (float)screenHeight / 6000.0f; 
+                float minZoom = piorCenarioZoom * 0.8f; 
+                camera.zoom = Clamp(camera.zoom * scaleFactor, minZoom, 3.0f);
+
+                Vector2 mouseWorldAfter = GetScreenToWorld2D(mousePos, camera);
+
+                // SÓ desliza a tela se a câmera estiver LIVRE. 
+                // Se estiver travada, o rastreio ali embaixo assume o controle e evita o bug.
+                if (!cameraTravada) {
+                    camera.target.x += (mouseWorldBefore.x - mouseWorldAfter.x);
+                    camera.target.y += (mouseWorldBefore.y - mouseWorldAfter.y);
                 }
             }
-        }
-        
-        // 3. CLAMP (PRENDER A CÂMERA NAS BORDAS)
-        float worldScreenW = screenWidth / camera.zoom;
-        float worldScreenH = screenHeight / camera.zoom;
-        const float LIMIT_MUNDO = 6000.0f; 
 
-        float minX = -(LIMIT_MUNDO / 2.0f) + (worldScreenW / 2.0f);
-        float maxX =  (LIMIT_MUNDO / 2.0f) - (worldScreenW / 2.0f);
-        float minY = -(LIMIT_MUNDO / 2.0f) + (worldScreenH / 2.0f);
-        float maxY =  (LIMIT_MUNDO / 2.0f) - (worldScreenH / 2.0f);
+            // 2. PAN (WASD) - Move e destrava a câmera instantaneamente
+            float moveSpeed = 15.0f / camera.zoom; 
+            if (IsKeyDown(KEY_W)) { camera.target.y -= moveSpeed; cameraTravada = false; }
+            if (IsKeyDown(KEY_S)) { camera.target.y += moveSpeed; cameraTravada = false; }
+            if (IsKeyDown(KEY_A)) { camera.target.x -= moveSpeed; cameraTravada = false; }
+            if (IsKeyDown(KEY_D)) { camera.target.x += moveSpeed; cameraTravada = false; }
 
-        if (minX > maxX) camera.target.x = 0.0f;
-        else camera.target.x = Clamp(camera.target.x, minX, maxX);
-
-        if (minY > maxY) camera.target.y = 0.0f;
-        else camera.target.y = Clamp(camera.target.y, minY, maxY);
-
-       // Detecção do Mouse (SCREEN TO WORLD)
-        Vector2 mouseScreen = GetMousePosition();
-        Vector2 mouseWorld = GetScreenToWorld2D(mouseScreen, camera);
-        
-        estrelaFocada = nullptr;
-        int indexEstrelaFocada = -1; 
-        
-        for (int i = 0; i < galaxia.size(); i++) {
-            float raioClick = galaxia[i].tam_nucleo + 30.0f; 
-            
-            if (CheckCollisionPointCircle(mouseWorld, galaxia[i].pos, raioClick)) {
-                estrelaFocada = &galaxia[i];
-                indexEstrelaFocada = i; 
-                break;
-            }
-        }
-
-        // --- SISTEMA DE CLIQUE E SELEÇÃO ---
-        bool mouseNaUI = false;
-
-        // 1. Protege todo o painel de botões e filtros do lado direito da tela de uma vez
-        Rectangle painelDireito = { (float)screenWidth - 150, 10, 140, 340 };
-        if (CheckCollisionPointRec(mouseScreen, painelDireito)) mouseNaUI = true;
-
-        // 2. Verifica áreas clicáveis DENTRO da caixa de informações
-        if (indexEstrelaSelecionada != -1) {
-            Vector2 screenPos = GetWorldToScreen2D(galaxia[indexEstrelaSelecionada].pos, camera);
-            int boxW = 280; 
-            int boxH = 140; 
-            
-            bool temPostoColisao = false;
-            for (const auto& p : galaxia[indexEstrelaSelecionada].planetas) {
-                if (p.tipo_vida == 4) temPostoColisao = true;
-            }
-
-            int boxX = screenPos.x + 30; int boxY = screenPos.y - 60;
-            if (boxX + boxW > screenWidth) boxX = screenPos.x - boxW - 30; 
-            if (boxY + boxH > screenHeight) boxY = screenPos.y - boxH;
-            if (boxY < 0) boxY = 10;
-            
-            // Área Clicável 1: Região do Botão GO! e TRAÇAR ROTA
-            Rectangle btnAcoesDir = { (float)boxX + 140, (float)boxY + 85, (float)boxW - 150, 50 };
-            if (CheckCollisionPointRec(mouseScreen, btnAcoesDir)) mouseNaUI = true;
-
-            // Área Clicável 2: Botão de Comprar Fuel (se ele estiver na tela)
-            if (indexEstrelaSelecionada == estrelaAtualPlayer && temPostoColisao) {
-                int linhaYPosto = boxY + 90 + 15 + 20 + 20 + 15 + (galaxia[indexEstrelaSelecionada].planetas.size() * 15) + 10;
-                Rectangle btnComprarFuel = { (float)boxX + 10, (float)linhaYPosto, (float)boxW - 20, 30 };
-                if (CheckCollisionPointRec(mouseScreen, btnComprarFuel)) mouseNaUI = true;
-            }
-            
-            // OBS: Removemos a caixa total (boxRect) daqui! O fundo agora é vazado.
-        }
-            
-        // Se clicou com o botão esquerdo e não acertou NENHUM botão da UI...
-        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && !mouseNaUI) {
-            if (indexEstrelaFocada != -1) {
-                // Seleciona a nova estrela (inclusive clicando nela através do fundo da caixa!)
-                indexEstrelaSelecionada = indexEstrelaFocada; 
-                focoCamera = indexEstrelaFocada; 
+            // Ping do Player (Tecla P) - Trava a câmera de volta na Nave
+            if (IsKeyPressed(KEY_P)) { 
+                timerPingPlayer = 3.0f; // Ativa o sinalizador por 3 segundos
                 cameraTravada = true;
-            } else {
-                // Clicou no vazio do espaço (ou no fundo transparente da caixa sem estrela atrás), deseleciona.
-                indexEstrelaSelecionada = -1; 
+                focoCamera = -1; // -1 = Nave do Player
             }
-        }
 
-        // --- LÓGICA DE ESCOLHA DE SPAWN ---
-        if (!spawnDefinido) {
-            if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
-                Vector2 mousePos = GetScreenToWorld2D(GetMousePosition(), camera);
+            // --- INPUT CASA (Tecla H) ---
+            if (IsKeyPressed(KEY_H)) { 
+                timerPingCasa = 3.0f; // Ativa o radar da casa por 3 segundos
+            }
+
+            // Atualização dos timers
+            if (timerPingPlayer > 0) timerPingPlayer -= GetFrameTime();
+            if (timerPingCasa > 0) timerPingCasa -= GetFrameTime(); 
+
+            // --- SISTEMA DE RASTREIO ROTACIONAL ---
+            if (cameraTravada) {
+                float piorCenarioZoom = (float)screenHeight / 6000.0f; 
+                float minZoom = piorCenarioZoom * 0.8f; 
                 
-                // Varre a galáxia inteira
-                for (int i = 0; i < galaxia.size(); i++) {
-                    Estrela& estrelaSpawn = galaxia[i];
-                    
-                    // Checa colisão matemática do clique com a estrela
-                    float dx = mousePos.x - estrelaSpawn.pos.x;
-                    float dy = mousePos.y - estrelaSpawn.pos.y;
-                    float distSq = (dx * dx) + (dy * dy);
-                    float raioHit = estrelaSpawn.tam_nucleo * 3.0f; // Margem para facilitar o clique
-                    
-                    if (distSq <= (raioHit * raioHit)) {
-                        
-                        // O "Morador" na verdade é a flag de chefe
-                        if (!estrelaSpawn.tem_chefe) {
-                            
-                            // 1. Define os ponteiros da casa e atual
-                            estrelaAtualPlayer = i;
-                            estrelaCasaPlayer = i;
-                            
-                            // 2. Define a posição inicial do Player e da Nave
-                            jogador->minhaNave->posicaoMapa = estrelaSpawn.pos;
-                            posNaveAtual = estrelaSpawn.pos;
-                            
-                            // 3. Força a geração do sistema e garante a Civilização Avançada
-                            GerarSistemaEstelar(estrelaSpawn);
-                            if (!estrelaSpawn.planetas.empty()) {
-                                estrelaSpawn.planetas[0].tipo_vida = 4; // 4 = Avançada
-                                estrelaSpawn.planetas[0].desc_vida = "Civilizacao Avancada";
-                                estrelaSpawn.planetas[0].nome += " (HOME)";
-                            }
-
-                            // 4. Finaliza a escolha e trava a câmera
-                            spawnDefinido = true;
-                            camera.target = estrelaSpawn.pos; 
-                            focoCamera = -1; // Força a câmera a seguir a nave
-                            cameraTravada = true;
-                            break;
-                        }
+                // Só rastreia e move a tela se o jogador deu zoom in (não está vendo a galáxia toda)
+                if (camera.zoom > minZoom + 0.1f) {
+                    if (focoCamera == -1) {
+                        camera.target = posNaveAtual; // Gruda e segue o jogador
+                    } else if (focoCamera >= 0 && focoCamera < galaxia.size()) {
+                        camera.target = galaxia[focoCamera].pos; // Gruda e segue a estrela clicada
                     }
                 }
             }
-        }
-
             
-        // =============================================================
-        // UI FIXA (SCREEN SPACE)
-        // =============================================================
-        
+            // 3. CLAMP (PRENDER A CÂMERA NAS BORDAS)
+            float worldScreenW = screenWidth / camera.zoom;
+            float worldScreenH = screenHeight / camera.zoom;
+            const float LIMIT_MUNDO = 6000.0f; 
 
-        // --- UPDATE GERAL (FÍSICA, LÓGICA DE TIERS E EFEITOS) ---
-        // --- VARIÁVEL DE CONTROLE DE FLUXO (THROTTLING) ---
-        // Declaramos static para ela persistir entre os frames sem resetar
-        // Isso impede que 100 inimigos decidam brilhar no mesmo frame
-        static int timer_fluxo_ki = 0;
-        if (timer_fluxo_ki > 0) timer_fluxo_ki--;
+            float minX = -(LIMIT_MUNDO / 2.0f) + (worldScreenW / 2.0f);
+            float maxX =  (LIMIT_MUNDO / 2.0f) - (worldScreenW / 2.0f);
+            float minY = -(LIMIT_MUNDO / 2.0f) + (worldScreenH / 2.0f);
+            float maxY =  (LIMIT_MUNDO / 2.0f) - (worldScreenH / 2.0f);
 
-        if (estrelaAtualPlayer >= 0 && !animandoViagem) {
-            jogador->minhaNave->AtualizarCondensador(GetFrameTime());
-        }
+            if (minX > maxX) camera.target.x = 0.0f;
+            else camera.target.x = Clamp(camera.target.x, minX, maxX);
 
-        // --- INPUT E LÓGICA DO KI DO JOGADOR 
-        if (estrelaAtualPlayer >= 0) {
-            // Velocidade do dimer
-            float velocidadeDimer = 0.006f; 
+            if (minY > maxY) camera.target.y = 0.0f;
+            else camera.target.y = Clamp(camera.target.y, minY, maxY);
 
-            // Se segura o C, sobe o Ki
-            if (IsKeyDown(KEY_C)) {
-                playerEscalaAtual += velocidadeDimer;
-                if (playerEscalaAtual > 1.0f) playerEscalaAtual = 1.0f;
-                playerEstadoKi = ELEVANDO;
-            } 
-            // Se segura o Z, abaixa o Ki
-            else if (IsKeyDown(KEY_Z)) {
-                playerEscalaAtual -= velocidadeDimer;
-                if (playerEscalaAtual < playerEscalaMinima) playerEscalaAtual = playerEscalaMinima;
-                playerEstadoKi = SUPRIMINDO;
-            } 
-            // Se não está apertando nada, estabiliza onde parou!
-            else {
-                if (playerEscalaAtual <= playerEscalaMinima) {
-                    playerEstadoKi = ESCONDIDO;
+        // Detecção do Mouse (SCREEN TO WORLD)
+            Vector2 mouseScreen = GetMousePosition();
+            Vector2 mouseWorld = GetScreenToWorld2D(mouseScreen, camera);
+            
+            estrelaFocada = nullptr;
+            indexEstrelaFocada = -1; 
+            
+            for (int i = 0; i < galaxia.size(); i++) {
+                float raioClick = galaxia[i].tam_nucleo + 30.0f; 
+                
+                if (CheckCollisionPointCircle(mouseWorld, galaxia[i].pos, raioClick)) {
+                    estrelaFocada = &galaxia[i];
+                    indexEstrelaFocada = i; 
+                    break;
+                }
+            }
+
+            // --- SISTEMA DE CLIQUE E SELEÇÃO ---
+            bool mouseNaUI = false;
+
+            // 1. Protege todo o painel de botões e filtros do lado direito da tela de uma vez
+            Rectangle painelDireito = { (float)screenWidth - 150, 10, 140, 340 };
+            if (CheckCollisionPointRec(mouseScreen, painelDireito)) mouseNaUI = true;
+
+            // 2. Verifica áreas clicáveis DENTRO da caixa de informações
+            if (indexEstrelaSelecionada != -1) {
+                Vector2 screenPos = GetWorldToScreen2D(galaxia[indexEstrelaSelecionada].pos, camera);
+                int boxW = 280; 
+                int boxH = 140; 
+                
+                bool temPostoColisao = false;
+                for (const auto& p : galaxia[indexEstrelaSelecionada].planetas) {
+                    if (p.tipo_vida == 4) temPostoColisao = true;
+                }
+
+                int boxX = screenPos.x + 30; int boxY = screenPos.y - 60;
+                if (boxX + boxW > screenWidth) boxX = screenPos.x - boxW - 30; 
+                if (boxY + boxH > screenHeight) boxY = screenPos.y - boxH;
+                if (boxY < 0) boxY = 10;
+                
+                // Área Clicável 1: Região do Botão GO! e TRAÇAR ROTA
+                Rectangle btnAcoesDir = { (float)boxX + 140, (float)boxY + 85, (float)boxW - 150, 50 };
+                if (CheckCollisionPointRec(mouseScreen, btnAcoesDir)) mouseNaUI = true;
+
+                // Área Clicável 2: Botão de Comprar Fuel (se ele estiver na tela)
+                if (indexEstrelaSelecionada == estrelaAtualPlayer && temPostoColisao) {
+                    int linhaYPosto = boxY + 90 + 15 + 20 + 20 + 15 + (galaxia[indexEstrelaSelecionada].planetas.size() * 15) + 10;
+                    Rectangle btnComprarFuel = { (float)boxX + 10, (float)linhaYPosto, (float)boxW - 20, 30 };
+                    if (CheckCollisionPointRec(mouseScreen, btnComprarFuel)) mouseNaUI = true;
+                }
+                
+                // OBS: Removemos a caixa total (boxRect) daqui! O fundo agora é vazado.
+            }
+                
+            // Se clicou com o botão esquerdo e não acertou NENHUM botão da UI...
+            if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && !mouseNaUI) {
+                if (indexEstrelaFocada != -1) {
+                    // Seleciona a nova estrela (inclusive clicando nela através do fundo da caixa!)
+                    indexEstrelaSelecionada = indexEstrelaFocada; 
+                    focoCamera = indexEstrelaFocada; 
+                    cameraTravada = true;
                 } else {
-                    playerEstadoKi = MAXIMO; // Aqui "MAXIMO" significa apenas que está estabilizado
+                    // Clicou no vazio do espaço (ou no fundo transparente da caixa sem estrela atrás), deseleciona.
+                    indexEstrelaSelecionada = -1; 
+                }
+            }
+
+            // --- LÓGICA DE ESCOLHA DE SPAWN ---
+            if (!spawnDefinido) {
+                if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+                    Vector2 mousePos = GetScreenToWorld2D(GetMousePosition(), camera);
                     
-                    // Pequeno efeito de pulsação APENAS se o Ki estiver no talo (100%)
-                    if (playerEscalaAtual >= 1.0f) {
-                        if(GetRandomValue(0,10) > 8) playerEscalaAtual = 1.01f; 
-                        else playerEscalaAtual = 1.0f;
-                    }
-                }
-            }
-
-            // Interpolação Matemática do Nível de Poder (Atualiza o número em tempo real)
-            float rangeP = 1.0f - playerEscalaMinima;
-            float pctP = (playerEscalaAtual - playerEscalaMinima) / rangeP;
-            if (pctP < 0) pctP = 0; if (pctP > 1) pctP = 1;
-            
-            jogador->pdlAtual = jogador->pdlBase + (int)((jogador->pdlMaximo - jogador->pdlBase) * pctP);
-
-            // Animação de Partículas e Raios
-            if (playerEscalaAtual > playerEscalaMinima + 0.01f) {
-                // O tamanho físico da aura continua proporcional ao PDL
-                float raio_visual = (float)jogador->pdlAtual / 2000.0f;
-                if (raio_visual < 15) raio_visual = 15;
-
-                // Define as propriedades dos raios baseadas estritamente no PDL ATUAL
-                float espessuraRaio = 1.0f;
-                int minSeg = 3; int maxSeg = 6; // Curtos e retos por padrão
-                int chanceGerar = 5;            // Raros por padrão
-                
-                // Tier 1: Suprimido (até 150k) -> Raios quase invisíveis
-                if (jogador->pdlAtual < 150000) {
-                    espessuraRaio = 1.0f; minSeg = 2; maxSeg = 4; chanceGerar = 2;
-                }
-                // Tier 2: Guerreiro Z (até 600k) -> Raios finos, médios
-                else if (jogador->pdlAtual < 600000) {
-                    espessuraRaio = 1.5f; minSeg = 3; maxSeg = 6; chanceGerar = 8;
-                }
-                // Tier 3: General (até 1.5M) -> Raios grossos, densos
-                else if (jogador->pdlAtual < 1500000) {
-                    espessuraRaio = 3.0f; minSeg = 5; maxSeg = 10; chanceGerar = 20;
-                }
-                // Tier 4: Entidade/Deus (Acima de 1.5M) -> Caos Total
-                else {
-                    espessuraRaio = 5.0f; minSeg = 8; maxSeg = 15; chanceGerar = 40;
-                }
-
-                // Atualiza os raios usando os parâmetros do Tier
-                for (auto& r : playerRaios) {
-                    r.timer_troca--;
-                    // Só regenera se o timer acabou E passar na chance do Tier
-                    if (r.timer_troca <= 0 && GetRandomValue(0, 100) < chanceGerar) {
-                        // O tamanho do raio segue o raio_visual da aura
-                        RegenerarRaio(r, raio_visual, minSeg, maxSeg, espessuraRaio);
-                    }
-                    // Se não gerou, apaga o raio antigo para não ficar flutuando
-                    else if (r.timer_troca <= 0) {
-                        r.pontos.clear();
-                        r.timer_troca = GetRandomValue(10, 30); // Espera um pouco pra tentar de novo
-                    }
-                }
-            }
-            float raio_visual_particulas = (float)jogador->pdlAtual / 2000.0f;
-            if (raio_visual_particulas < 15) raio_visual_particulas = 15;
-
-            int particulasAlvo = (jogador->pdlAtual - 50000) / 5000; 
-            if (particulasAlvo < 0) particulasAlvo = 0;
-            if (particulasAlvo > 600) particulasAlvo = 600;
-
-            int chanceNegativa = 0;
-            if (jogador->pdlAtual > 1500000) {
-                chanceNegativa = (jogador->pdlAtual - 1500000) / 30000; 
-                if (chanceNegativa > 50) chanceNegativa = 50; 
-            }
-
-            int indexParticula = 0;
-            for (auto& p : playerParticulas) {
-                // 1. ATUALIZA AS VIVAS
-                if (p.vida > 0.0f) {
-                    p.offset.x += p.velocidade.x; 
-                    p.offset.y += p.velocidade.y;
-                    float distSq = (p.offset.x*p.offset.x) + (p.offset.y*p.offset.y);
-                    
-                    if (p.negativa) { 
-                        if (distSq < 100.0f) p.vida = 0.0f; 
-                    } else { 
-                        p.vida -= 0.015f; 
-                        if (p.vida <= 0.0f || distSq > (raio_visual_particulas * raio_visual_particulas * 2.0f)) p.vida = 0.0f; 
-                    }
-                }
-                
-                // 2. GERA NOVAS
-                if (p.vida <= 0.0f && indexParticula < particulasAlvo) {
-                    p.vida = 1.0f; 
-                    if (GetRandomValue(0, 100) < chanceNegativa) { 
-                        p.negativa = true; 
-                        p.cor = BLACK;
-                        float ang = GetRandomValue(0, 360) * DEG2RAD;
-                        float raioSpawn = raio_visual_particulas * 1.0f; 
+                    // Varre a galáxia inteira
+                    for (int i = 0; i < galaxia.size(); i++) {
+                        Estrela& estrelaSpawn = galaxia[i];
                         
-                        p.offset = { cosf(ang) * raioSpawn, sinf(ang) * raioSpawn };
-                        float vel = GetRandomValue(40, 80) / 10.0f;
-                        p.velocidade = { -cosf(ang) * vel, -sinf(ang) * vel };
-                        p.tam = GetRandomValue(30, 60) / 10.0f;
-                    } else {
-                        p.negativa = false;
-                        p.offset = { (float)GetRandomValue(-10, 10), (float)GetRandomValue(-10, 10) };
-                        float ang = GetRandomValue(0, 360) * DEG2RAD;
-                        float vel = GetRandomValue(25, 55) / 10.0f; 
-                        p.velocidade = { cosf(ang) * vel, sinf(ang) * vel };
-                        p.cor = GetRandomValue(0, 1) ? WHITE : jogador->corAura;
-                        p.tam = GetRandomValue(30, 70) / 10.0f;
-                    }
-                }
-                indexParticula++;
-            }
-        }
-
-        // --- LÓGICA DE MOVIMENTO RÁPIDO ---
-        if (animandoViagem) {
-            Vector2 alvo = galaxia[estrelaDestinoCurto].pos;
-            float dx = alvo.x - posNaveAtual.x;
-            float dy = alvo.y - posNaveAtual.y;
-            float dist = sqrt(dx*dx + dy*dy);
-            
-            if (dist < 5.0f) { // Chegou ao destino
-                estrelaAtualPlayer = estrelaDestinoCurto;
-                posNaveAtual = alvo;
-                animandoViagem = false;
-                GerarSistemaEstelar(galaxia[estrelaAtualPlayer]);
-            } else {
-                // Desliza suavemente (Ajuste o 1500.0f se quiser mais rápido ou devagar)
-                float velNave = 25.0f * GetFrameTime(); 
-                posNaveAtual.x += (dx / dist) * velNave;
-                posNaveAtual.y += (dy / dist) * velNave;
-            }
-        } else if (estrelaAtualPlayer >= 0) {
-            // Se não está viajando, fica ancorado na estrela atual
-            posNaveAtual = galaxia[estrelaAtualPlayer].pos;
-        }
-
-            // --- UPDATE GERAL ---
-        
-        // ROTAÇÃO DAS ZONAS DE PERIGO
-        for (auto& z : zonasMeteoros) RotacionarPonto(z.pos, -0.009f);
-        for (auto& p : zonasPiratas) RotacionarPonto(p.pos, -0.009f);
-
-        for (int i = 0; i < galaxia.size(); i++) {
-            Estrela& e = galaxia[i]; 
-
-            // 1. ROTAÇÃO
-            RotacionarPonto(e.pos, -0.009f); 
-
-            // 2. LÓGICA DO KI
-            if (e.tem_chefe) {
-                
-                // Calcula tempos baseados no Tier (Mantido da sua lógica anterior)
-                int tempo_sup_min = 10 * 60; int tempo_sup_max = 30 * 60;
-                int tempo_ki_min = 5 * 60;   int tempo_ki_max = 15 * 60;
-
-                if (e.nivel_maximo > 500000 && e.nivel_maximo <= 1000000) { // Tier 2
-                    tempo_sup_min = 20*60; tempo_sup_max = 40*60; tempo_ki_min = 10*60; tempo_ki_max = 20*60;
-                } else if (e.nivel_maximo > 1000000 && e.nivel_maximo <= 1500000) { // Tier 3
-                    tempo_sup_min = 30*60; tempo_sup_max = 40*60; tempo_ki_min = 15*60; tempo_ki_max = 25*60;
-                } else if (e.nivel_maximo > 1500000 && e.nivel_maximo <= 2000000) { // Tier 4
-                    tempo_sup_min = 40*60; tempo_sup_max = 50*60; tempo_ki_min = 20*60; tempo_ki_max = 30*60;
-                } else if (e.nivel_maximo > 2000000 && e.nivel_maximo <= 2500000) { // Tier 5
-                    tempo_sup_min = 50*60; tempo_sup_max = 60*60; tempo_ki_min = 25*60; tempo_ki_max = 35*60;
-                } else if (e.nivel_maximo > 2500000) { // Tier 6
-                    tempo_sup_min = 60*60; tempo_sup_max = 90*60; tempo_ki_min = 30*60; tempo_ki_max = 40*60;
-                }
-
-                // Atualiza visual
-                float range = 1.0f - e.escala_minima;
-                if (range <= 0.0001f) range = 0.0001f;
-                float pct = (e.escala_atual - e.escala_minima) / range;
-                if (pct < 0) pct = 0; if (pct > 1) pct = 1;
-                e.nivel_atual = e.nivel_base + (int)((e.nivel_maximo - e.nivel_base) * pct);
-
-                switch (e.estado_ki) {
-                    case ESCONDIDO:
-                        e.escala_atual = e.escala_minima;
-                        e.timer_estado--;
+                        // Checa colisão matemática do clique com a estrela
+                        float dx = mousePos.x - estrelaSpawn.pos.x;
+                        float dy = mousePos.y - estrelaSpawn.pos.y;
+                        float distSq = (dx * dx) + (dy * dy);
+                        float raioHit = estrelaSpawn.tam_nucleo * 3.0f; // Margem para facilitar o clique
                         
-                        // --- FILA PARA PERFORMANCE ---
-                        if (e.timer_estado <= 0) {
-                            // Só permite subir se a fila estiver livre
-                            if (timer_fluxo_ki <= 0) {
-                                e.estado_ki = ELEVANDO;
-                                
-                                // Ocupa a fila por um tempo aleatório (0.3s a 0.8s)
-                                // Isso garante que os inimigos liguem UM POR UM, nunca todos juntos.
-                                timer_fluxo_ki = GetRandomValue(100, 300); 
-                            } 
-                            else {
-                                // Se a fila está cheia, espera mais um pouquinho (0.5s) e tenta de novo
-                                e.timer_estado = 100; 
-                            }
-                        }
-                        break;
-
-                    case ELEVANDO:
-                        e.escala_atual += 0.005f; 
-                        if (e.escala_atual >= 1.0f) {
-                            e.escala_atual = 1.0f; e.estado_ki = MAXIMO;
-                            e.timer_estado = GetRandomValue(tempo_ki_min, tempo_ki_max); 
-                        }
-                        break;
-
-                    case MAXIMO:
-                        e.escala_atual = 1.0f;
-                        if(GetRandomValue(0,10) > 8) e.escala_atual = 1.02f;
-                        e.timer_estado--;
-                        if (e.timer_estado <= 0) e.estado_ki = SUPRIMINDO;
-                        break;
-
-                    case SUPRIMINDO:
-                        e.escala_atual -= 0.008f; 
-                        if (e.escala_atual <= e.escala_minima) {
-                            e.escala_atual = e.escala_minima; e.estado_ki = ESCONDIDO;
-                            e.timer_estado = GetRandomValue(tempo_sup_min, tempo_sup_max); 
-                        }
-                        break;
-                }
-                
-                // 3. EFEITOS
-                // Calcula o raio sempre, pois as partículas precisam dele para saber quando morrer
-                float raio_visual = (float)e.nivel_atual / 2000.0f;
-                if (raio_visual < 15) raio_visual = 15;
-                
-                bool auraAtiva = (e.escala_atual > e.escala_minima + 0.05f);
-
-                // Raios (Só atualizam e aparecem se a aura estiver ligada)
-                if (auraAtiva) {
-                     for (auto& r : e.raios) {
-                        r.timer_troca--;
-                        if (r.timer_troca <= 0) {
-                            int seg_min=3, seg_max=5; float escala=1.0f;
-                            if(e.nivel_atual > 1500000) { seg_min=6; seg_max=10; }
-                            if(e.nivel_atual > 2500000) { seg_min=8; seg_max=12; escala=4.0f; }
-                            RegenerarRaio(r, raio_visual, seg_min, seg_max, escala);
-                        }
-                     }
-                }
-
-                if(e.nivel_atual > 500000) {
-                    int limite_spawns = (e.nivel_atual > 2000000) ? 5 : 2; 
-                    int spawns_feitos = 0;
-
-                    for (auto& p : e.particulas_ki) {
-                        float distSq = (p.offset.x*p.offset.x) + (p.offset.y*p.offset.y);
-                        bool morreu = false;
-
-                        if (p.vida > 0.0f) {
-                            p.offset.x += p.velocidade.x; 
-                            p.offset.y += p.velocidade.y;
+                        if (distSq <= (raioHit * raioHit)) {
                             
-                            if(p.negativa) { 
-                                if(distSq < 25.0f) morreu = true; 
-                            } else { 
-                                p.vida -= 0.02f; 
-                                if(p.vida <= 0 || distSq > (raio_visual*raio_visual)) morreu = true; 
-                            }
-                        } else {
-                            morreu = true;
-                        }
-
-                        if(morreu) {
-                            p.vida = 0.0f; 
-                            if (spawns_feitos < limite_spawns && auraAtiva) {
-                                p.vida = 1.0f; 
-                                p.negativa = false;
+                            // O "Morador" na verdade é a flag de chefe
+                            if (!estrelaSpawn.tem_chefe) {
                                 
-                                if(e.nivel_atual > 2000000 && GetRandomValue(0,100)<40) { 
-                                    p.negativa = true; p.cor = BLACK;
-                                    float ang = GetRandomValue(0,360)*DEG2RAD;
-                                    float rSpawn = raio_visual * (GetRandomValue(90, 110)/100.0f);
-                                    p.offset = {cosf(ang)*rSpawn, sinf(ang)*rSpawn};
-                                    float vel = GetRandomValue(30, 60) / 10.0f;
-                                    p.velocidade = {-cosf(ang)*vel, -sinf(ang)*vel};
-                                    p.tam = GetRandomValue(30,50)/10.0f;
-                                } else { 
-                                    p.offset = {(float)GetRandomValue(-5, 5), (float)GetRandomValue(-5, 5)};
-                                    float ang = GetRandomValue(0,360)*DEG2RAD;
-                                    float vel = GetRandomValue(15, 35) / 10.0f; 
-                                    p.velocidade = {cosf(ang)*vel, sinf(ang)*vel};
-                                    int tipo = GetRandomValue(0, 2);
-                                    if (tipo == 0) p.cor = WHITE;
-                                    else if (tipo == 1) p.cor = ColorAlpha(e.cor_aura, 0.8f);
-                                    else p.cor = ColorAlpha(e.cor_aura, 0.4f);
-                                    p.tam = GetRandomValue(30,60)/10.0f;
+                                // 1. Define os ponteiros da casa e atual
+                                estrelaAtualPlayer = i;
+                                estrelaCasaPlayer = i;
+                                
+                                // 2. Define a posição inicial do Player e da Nave
+                                jogador->minhaNave->posicaoMapa = estrelaSpawn.pos;
+                                posNaveAtual = estrelaSpawn.pos;
+                                
+                                // 3. Força a geração do sistema e garante a Civilização Avançada
+                                GerarSistemaEstelar(estrelaSpawn);
+                                if (!estrelaSpawn.planetas.empty()) {
+                                    estrelaSpawn.planetas[0].tipo_vida = 4; // 4 = Avançada
+                                    estrelaSpawn.planetas[0].desc_vida = "Civilizacao Avancada";
+                                    estrelaSpawn.planetas[0].nome += " (HOME)";
                                 }
-                                spawns_feitos++;
+
+                                // 4. Finaliza a escolha e trava a câmera
+                                spawnDefinido = true;
+                                camera.target = estrelaSpawn.pos; 
+                                focoCamera = -1; // Força a câmera a seguir a nave
+                                cameraTravada = true;
+                                break;
                             }
                         }
                     }
                 }
-            } 
+            }
 
-            // 4. ANIMAÇÃO FÍSICA
-            e.timer_anim++;
-            if(e.timer_anim > e.limite_anim) {
-                e.timer_anim = 0;
-                if(e.crescendo) { e.tam_nucleo++; if(e.tam_nucleo >= e.tam_base + e.alcance_cresc) e.crescendo = false; } 
-                else { e.tam_nucleo--; if(e.tam_nucleo <= e.tam_base - e.alcance_cresc) e.crescendo = true; }
+                
+            // =============================================================
+            // UI FIXA (SCREEN SPACE)
+            // =============================================================
+            
+
+            // --- UPDATE GERAL (FÍSICA, LÓGICA DE TIERS E EFEITOS) ---
+            // --- VARIÁVEL DE CONTROLE DE FLUXO (THROTTLING) ---
+            // Declaramos static para ela persistir entre os frames sem resetar
+            // Isso impede que 100 inimigos decidam brilhar no mesmo frame
+            static int timer_fluxo_ki = 0;
+            if (timer_fluxo_ki > 0) timer_fluxo_ki--;
+
+            if (estrelaAtualPlayer >= 0 && !animandoViagem) {
+                jogador->minhaNave->AtualizarCondensador(GetFrameTime());
+            }
+
+            // --- INPUT E LÓGICA DO KI DO JOGADOR 
+            if (estrelaAtualPlayer >= 0) {
+                // Velocidade do dimer
+                float velocidadeDimer = 0.006f; 
+
+                // Se segura o C, sobe o Ki
+                if (IsKeyDown(KEY_C)) {
+                    playerEscalaAtual += velocidadeDimer;
+                    if (playerEscalaAtual > 1.0f) playerEscalaAtual = 1.0f;
+                    playerEstadoKi = ELEVANDO;
+                } 
+                // Se segura o Z, abaixa o Ki
+                else if (IsKeyDown(KEY_Z)) {
+                    playerEscalaAtual -= velocidadeDimer;
+                    if (playerEscalaAtual < playerEscalaMinima) playerEscalaAtual = playerEscalaMinima;
+                    playerEstadoKi = SUPRIMINDO;
+                } 
+                // Se não está apertando nada, estabiliza onde parou!
+                else {
+                    if (playerEscalaAtual <= playerEscalaMinima) {
+                        playerEstadoKi = ESCONDIDO;
+                    } else {
+                        playerEstadoKi = MAXIMO; // Aqui "MAXIMO" significa apenas que está estabilizado
+                        
+                        // Pequeno efeito de pulsação APENAS se o Ki estiver no talo (100%)
+                        if (playerEscalaAtual >= 1.0f) {
+                            if(GetRandomValue(0,10) > 8) playerEscalaAtual = 1.01f; 
+                            else playerEscalaAtual = 1.0f;
+                        }
+                    }
+                }
+
+                // Interpolação Matemática do Nível de Poder (Atualiza o número em tempo real)
+                float rangeP = 1.0f - playerEscalaMinima;
+                float pctP = (playerEscalaAtual - playerEscalaMinima) / rangeP;
+                if (pctP < 0) pctP = 0; if (pctP > 1) pctP = 1;
+                
+                jogador->pdlAtual = jogador->pdlBase + (int)((jogador->pdlMaximo - jogador->pdlBase) * pctP);
+
+                // Animação de Partículas e Raios
+                if (playerEscalaAtual > playerEscalaMinima + 0.01f) {
+                    // O tamanho físico da aura continua proporcional ao PDL
+                    float raio_visual = (float)jogador->pdlAtual / 2000.0f;
+                    if (raio_visual < 15) raio_visual = 15;
+
+                    // Define as propriedades dos raios baseadas estritamente no PDL ATUAL
+                    float espessuraRaio = 1.0f;
+                    int minSeg = 3; int maxSeg = 6; // Curtos e retos por padrão
+                    int chanceGerar = 5;            // Raros por padrão
+                    
+                    // Tier 1: Suprimido (até 150k) -> Raios quase invisíveis
+                    if (jogador->pdlAtual < 150000) {
+                        espessuraRaio = 1.0f; minSeg = 2; maxSeg = 4; chanceGerar = 2;
+                    }
+                    // Tier 2: Guerreiro Z (até 600k) -> Raios finos, médios
+                    else if (jogador->pdlAtual < 600000) {
+                        espessuraRaio = 1.5f; minSeg = 3; maxSeg = 6; chanceGerar = 8;
+                    }
+                    // Tier 3: General (até 1.5M) -> Raios grossos, densos
+                    else if (jogador->pdlAtual < 1500000) {
+                        espessuraRaio = 3.0f; minSeg = 5; maxSeg = 10; chanceGerar = 20;
+                    }
+                    // Tier 4: Entidade/Deus (Acima de 1.5M) -> Caos Total
+                    else {
+                        espessuraRaio = 5.0f; minSeg = 8; maxSeg = 15; chanceGerar = 40;
+                    }
+
+                    // Atualiza os raios usando os parâmetros do Tier
+                    for (auto& r : playerRaios) {
+                        r.timer_troca--;
+                        // Só regenera se o timer acabou E passar na chance do Tier
+                        if (r.timer_troca <= 0 && GetRandomValue(0, 100) < chanceGerar) {
+                            // O tamanho do raio segue o raio_visual da aura
+                            RegenerarRaio(r, raio_visual, minSeg, maxSeg, espessuraRaio);
+                        }
+                        // Se não gerou, apaga o raio antigo para não ficar flutuando
+                        else if (r.timer_troca <= 0) {
+                            r.pontos.clear();
+                            r.timer_troca = GetRandomValue(10, 30); // Espera um pouco pra tentar de novo
+                        }
+                    }
+                }
+                float raio_visual_particulas = (float)jogador->pdlAtual / 2000.0f;
+                if (raio_visual_particulas < 15) raio_visual_particulas = 15;
+
+                int particulasAlvo = (jogador->pdlAtual - 50000) / 5000; 
+                if (particulasAlvo < 0) particulasAlvo = 0;
+                if (particulasAlvo > 600) particulasAlvo = 600;
+
+                int chanceNegativa = 0;
+                if (jogador->pdlAtual > 1500000) {
+                    chanceNegativa = (jogador->pdlAtual - 1500000) / 30000; 
+                    if (chanceNegativa > 50) chanceNegativa = 50; 
+                }
+
+                int indexParticula = 0;
+                for (auto& p : playerParticulas) {
+                    // 1. ATUALIZA AS VIVAS
+                    if (p.vida > 0.0f) {
+                        p.offset.x += p.velocidade.x; 
+                        p.offset.y += p.velocidade.y;
+                        float distSq = (p.offset.x*p.offset.x) + (p.offset.y*p.offset.y);
+                        
+                        if (p.negativa) { 
+                            if (distSq < 100.0f) p.vida = 0.0f; 
+                        } else { 
+                            p.vida -= 0.015f; 
+                            if (p.vida <= 0.0f || distSq > (raio_visual_particulas * raio_visual_particulas * 2.0f)) p.vida = 0.0f; 
+                        }
+                    }
+                    
+                    // 2. GERA NOVAS
+                    if (p.vida <= 0.0f && indexParticula < particulasAlvo) {
+                        p.vida = 1.0f; 
+                        if (GetRandomValue(0, 100) < chanceNegativa) { 
+                            p.negativa = true; 
+                            p.cor = BLACK;
+                            float ang = GetRandomValue(0, 360) * DEG2RAD;
+                            float raioSpawn = raio_visual_particulas * 1.0f; 
+                            
+                            p.offset = { cosf(ang) * raioSpawn, sinf(ang) * raioSpawn };
+                            float vel = GetRandomValue(40, 80) / 10.0f;
+                            p.velocidade = { -cosf(ang) * vel, -sinf(ang) * vel };
+                            p.tam = GetRandomValue(30, 60) / 10.0f;
+                        } else {
+                            p.negativa = false;
+                            p.offset = { (float)GetRandomValue(-10, 10), (float)GetRandomValue(-10, 10) };
+                            float ang = GetRandomValue(0, 360) * DEG2RAD;
+                            float vel = GetRandomValue(25, 55) / 10.0f; 
+                            p.velocidade = { cosf(ang) * vel, sinf(ang) * vel };
+                            p.cor = GetRandomValue(0, 1) ? WHITE : jogador->corAura;
+                            p.tam = GetRandomValue(30, 70) / 10.0f;
+                        }
+                    }
+                    indexParticula++;
+                }
+            }
+
+            // --- LÓGICA DE MOVIMENTO RÁPIDO ---
+            if (animandoViagem) {
+                Vector2 alvo = galaxia[estrelaDestinoCurto].pos;
+                float dx = alvo.x - posNaveAtual.x;
+                float dy = alvo.y - posNaveAtual.y;
+                float dist = sqrt(dx*dx + dy*dy);
+                
+                if (dist < 5.0f) { // Chegou ao destino
+                    estrelaAtualPlayer = estrelaDestinoCurto;
+                    posNaveAtual = alvo;
+                    animandoViagem = false;
+                    GerarSistemaEstelar(galaxia[estrelaAtualPlayer]);
+                } else {
+                    // Desliza suavemente (Ajuste o 1500.0f se quiser mais rápido ou devagar)
+                    float velNave = 25.0f * GetFrameTime(); 
+                    posNaveAtual.x += (dx / dist) * velNave;
+                    posNaveAtual.y += (dy / dist) * velNave;
+                }
+            } else if (estrelaAtualPlayer >= 0) {
+                // Se não está viajando, fica ancorado na estrela atual
+                posNaveAtual = galaxia[estrelaAtualPlayer].pos;
+            }
+
+                // --- UPDATE GERAL ---
+            
+            // ROTAÇÃO DAS ZONAS DE PERIGO
+            for (auto& z : zonasMeteoros) RotacionarPonto(z.pos, -0.009f);
+            for (auto& p : zonasPiratas) RotacionarPonto(p.pos, -0.009f);
+
+            for (int i = 0; i < galaxia.size(); i++) {
+                Estrela& e = galaxia[i]; 
+
+                // 1. ROTAÇÃO
+                RotacionarPonto(e.pos, -0.009f); 
+
+                // 2. LÓGICA DO KI
+                if (e.tem_chefe) {
+                    
+                    // Calcula tempos baseados no Tier (Mantido da sua lógica anterior)
+                    int tempo_sup_min = 10 * 60; int tempo_sup_max = 30 * 60;
+                    int tempo_ki_min = 5 * 60;   int tempo_ki_max = 15 * 60;
+
+                    if (e.nivel_maximo > 500000 && e.nivel_maximo <= 1000000) { // Tier 2
+                        tempo_sup_min = 20*60; tempo_sup_max = 40*60; tempo_ki_min = 10*60; tempo_ki_max = 20*60;
+                    } else if (e.nivel_maximo > 1000000 && e.nivel_maximo <= 1500000) { // Tier 3
+                        tempo_sup_min = 30*60; tempo_sup_max = 40*60; tempo_ki_min = 15*60; tempo_ki_max = 25*60;
+                    } else if (e.nivel_maximo > 1500000 && e.nivel_maximo <= 2000000) { // Tier 4
+                        tempo_sup_min = 40*60; tempo_sup_max = 50*60; tempo_ki_min = 20*60; tempo_ki_max = 30*60;
+                    } else if (e.nivel_maximo > 2000000 && e.nivel_maximo <= 2500000) { // Tier 5
+                        tempo_sup_min = 50*60; tempo_sup_max = 60*60; tempo_ki_min = 25*60; tempo_ki_max = 35*60;
+                    } else if (e.nivel_maximo > 2500000) { // Tier 6
+                        tempo_sup_min = 60*60; tempo_sup_max = 90*60; tempo_ki_min = 30*60; tempo_ki_max = 40*60;
+                    }
+
+                    // Atualiza visual
+                    float range = 1.0f - e.escala_minima;
+                    if (range <= 0.0001f) range = 0.0001f;
+                    float pct = (e.escala_atual - e.escala_minima) / range;
+                    if (pct < 0) pct = 0; if (pct > 1) pct = 1;
+                    e.nivel_atual = e.nivel_base + (int)((e.nivel_maximo - e.nivel_base) * pct);
+
+                    switch (e.estado_ki) {
+                        case ESCONDIDO:
+                            e.escala_atual = e.escala_minima;
+                            e.timer_estado--;
+                            
+                            // --- FILA PARA PERFORMANCE ---
+                            if (e.timer_estado <= 0) {
+                                // Só permite subir se a fila estiver livre
+                                if (timer_fluxo_ki <= 0) {
+                                    e.estado_ki = ELEVANDO;
+                                    
+                                    // Ocupa a fila por um tempo aleatório (0.3s a 0.8s)
+                                    // Isso garante que os inimigos liguem UM POR UM, nunca todos juntos.
+                                    timer_fluxo_ki = GetRandomValue(100, 300); 
+                                } 
+                                else {
+                                    // Se a fila está cheia, espera mais um pouquinho (0.5s) e tenta de novo
+                                    e.timer_estado = 100; 
+                                }
+                            }
+                            break;
+
+                        case ELEVANDO:
+                            e.escala_atual += 0.005f; 
+                            if (e.escala_atual >= 1.0f) {
+                                e.escala_atual = 1.0f; e.estado_ki = MAXIMO;
+                                e.timer_estado = GetRandomValue(tempo_ki_min, tempo_ki_max); 
+                            }
+                            break;
+
+                        case MAXIMO:
+                            e.escala_atual = 1.0f;
+                            if(GetRandomValue(0,10) > 8) e.escala_atual = 1.02f;
+                            e.timer_estado--;
+                            if (e.timer_estado <= 0) e.estado_ki = SUPRIMINDO;
+                            break;
+
+                        case SUPRIMINDO:
+                            e.escala_atual -= 0.008f; 
+                            if (e.escala_atual <= e.escala_minima) {
+                                e.escala_atual = e.escala_minima; e.estado_ki = ESCONDIDO;
+                                e.timer_estado = GetRandomValue(tempo_sup_min, tempo_sup_max); 
+                            }
+                            break;
+                    }
+                    
+                    // 3. EFEITOS
+                    // Calcula o raio sempre, pois as partículas precisam dele para saber quando morrer
+                    float raio_visual = (float)e.nivel_atual / 2000.0f;
+                    if (raio_visual < 15) raio_visual = 15;
+                    
+                    bool auraAtiva = (e.escala_atual > e.escala_minima + 0.05f);
+
+                    // Raios (Só atualizam e aparecem se a aura estiver ligada)
+                    if (auraAtiva) {
+                        for (auto& r : e.raios) {
+                            r.timer_troca--;
+                            if (r.timer_troca <= 0) {
+                                int seg_min=3, seg_max=5; float escala=1.0f;
+                                if(e.nivel_atual > 1500000) { seg_min=6; seg_max=10; }
+                                if(e.nivel_atual > 2500000) { seg_min=8; seg_max=12; escala=4.0f; }
+                                RegenerarRaio(r, raio_visual, seg_min, seg_max, escala);
+                            }
+                        }
+                    }
+
+                    if(e.nivel_atual > 500000) {
+                        int limite_spawns = (e.nivel_atual > 2000000) ? 5 : 2; 
+                        int spawns_feitos = 0;
+
+                        for (auto& p : e.particulas_ki) {
+                            float distSq = (p.offset.x*p.offset.x) + (p.offset.y*p.offset.y);
+                            bool morreu = false;
+
+                            if (p.vida > 0.0f) {
+                                p.offset.x += p.velocidade.x; 
+                                p.offset.y += p.velocidade.y;
+                                
+                                if(p.negativa) { 
+                                    if(distSq < 25.0f) morreu = true; 
+                                } else { 
+                                    p.vida -= 0.02f; 
+                                    if(p.vida <= 0 || distSq > (raio_visual*raio_visual)) morreu = true; 
+                                }
+                            } else {
+                                morreu = true;
+                            }
+
+                            if(morreu) {
+                                p.vida = 0.0f; 
+                                if (spawns_feitos < limite_spawns && auraAtiva) {
+                                    p.vida = 1.0f; 
+                                    p.negativa = false;
+                                    
+                                    if(e.nivel_atual > 2000000 && GetRandomValue(0,100)<40) { 
+                                        p.negativa = true; p.cor = BLACK;
+                                        float ang = GetRandomValue(0,360)*DEG2RAD;
+                                        float rSpawn = raio_visual * (GetRandomValue(90, 110)/100.0f);
+                                        p.offset = {cosf(ang)*rSpawn, sinf(ang)*rSpawn};
+                                        float vel = GetRandomValue(30, 60) / 10.0f;
+                                        p.velocidade = {-cosf(ang)*vel, -sinf(ang)*vel};
+                                        p.tam = GetRandomValue(30,50)/10.0f;
+                                    } else { 
+                                        p.offset = {(float)GetRandomValue(-5, 5), (float)GetRandomValue(-5, 5)};
+                                        float ang = GetRandomValue(0,360)*DEG2RAD;
+                                        float vel = GetRandomValue(15, 35) / 10.0f; 
+                                        p.velocidade = {cosf(ang)*vel, sinf(ang)*vel};
+                                        int tipo = GetRandomValue(0, 2);
+                                        if (tipo == 0) p.cor = WHITE;
+                                        else if (tipo == 1) p.cor = ColorAlpha(e.cor_aura, 0.8f);
+                                        else p.cor = ColorAlpha(e.cor_aura, 0.4f);
+                                        p.tam = GetRandomValue(30,60)/10.0f;
+                                    }
+                                    spawns_feitos++;
+                                }
+                            }
+                        }
+                    }
+                } 
+
+                // 4. ANIMAÇÃO FÍSICA
+                e.timer_anim++;
+                if(e.timer_anim > e.limite_anim) {
+                    e.timer_anim = 0;
+                    if(e.crescendo) { e.tam_nucleo++; if(e.tam_nucleo >= e.tam_base + e.alcance_cresc) e.crescendo = false; } 
+                    else { e.tam_nucleo--; if(e.tam_nucleo <= e.tam_base - e.alcance_cresc) e.crescendo = true; }
+                }
             }
         }
 
@@ -1608,9 +1851,11 @@ int main(void)
         BeginDrawing();
         ClearBackground(BLACK);
 
-        // Incrementa o ângulo total para o desenho da textura
-        anguloGalaxia -= 0.01f; // MENOS igual, para girar junto com as estrelas
-        if (anguloGalaxia < 0.0f) anguloGalaxia += 360.0f;
+        if (!isPaused) {
+            // Incrementa o ângulo total para o desenho da textura
+            anguloGalaxia -= 0.01f; // MENOS igual, para girar junto com as estrelas
+            if (anguloGalaxia < 0.0f) anguloGalaxia += 360.0f;
+        }
 
         BeginMode2D(camera);
 
@@ -1619,24 +1864,26 @@ int main(void)
             if (mostrarVisual) {
                 float tempo = GetTime(); // Pega o tempo atual para a pulsação
 
-                for (auto& bg : bgGalaxies) {
-                    // 1. Atualiza Rotação
-                    bg.rotation += bg.rotSpeed;
+                if (!isPaused) {
+                    for (auto& bg : bgGalaxies) {
+                        // 1. Atualiza Rotação
+                        bg.rotation += bg.rotSpeed;
 
-                    // 2. Calcula Pulsação (Onda Senoidal suave)
-                    // Varia o alpha entre 0.3 (escuro) e 0.8 (brilhante)
-                    float pulse = (sinf(tempo * bg.pulseSpeed + bg.pulseOffset) + 1.0f) / 2.0f; // 0.0 a 1.0
-                    float alpha = 0.3f + (pulse * 0.5f); 
-                    Color pulseColor = ColorAlpha(WHITE, alpha);
+                        // 2. Calcula Pulsação (Onda Senoidal suave)
+                        // Varia o alpha entre 0.3 (escuro) e 0.8 (brilhante)
+                        float pulse = (sinf(tempo * bg.pulseSpeed + bg.pulseOffset) + 1.0f) / 2.0f; // 0.0 a 1.0
+                        float alpha = 0.3f + (pulse * 0.5f); 
+                        Color pulseColor = ColorAlpha(WHITE, alpha);
 
-                    Texture2D tex = bgTextures[bg.textureIndex];
-                    
-                    // Define destino e pivô para rotação centralizada
-                    Rectangle source = {0, 0, (float)tex.width, (float)tex.height};
-                    Rectangle dest = {bg.pos.x, bg.pos.y, tex.width * bg.scale, tex.height * bg.scale};
-                    Vector2 origin = {dest.width / 2.0f, dest.height / 2.0f}; // Pivô no centro
+                        Texture2D tex = bgTextures[bg.textureIndex];
+                        
+                        // Define destino e pivô para rotação centralizada
+                        Rectangle source = {0, 0, (float)tex.width, (float)tex.height};
+                        Rectangle dest = {bg.pos.x, bg.pos.y, tex.width * bg.scale, tex.height * bg.scale};
+                        Vector2 origin = {dest.width / 2.0f, dest.height / 2.0f}; // Pivô no centro
 
-                    DrawTexturePro(tex, source, dest, origin, bg.rotation, pulseColor);
+                        DrawTexturePro(tex, source, dest, origin, bg.rotation, pulseColor);
+                    }
                 }
             }
 
@@ -2539,6 +2786,35 @@ int main(void)
             DrawText("INICIAR VIAGEM", (int)(btnViagem.x + (btnVW / 2) - (txtVW / 2)), (int)(btnViagem.y + 15), 20, hoverViagem ? BLACK : WHITE);
         }
 
+        // --- MENU DE PAUSE (OVERLAY) ---
+        // =============================================================
+        if (isPaused) {
+            DrawRectangle(0, 0, screenWidth, screenHeight, ColorAlpha(BLACK, 0.8f));
+            
+            int menuW = 300;
+            int menuH = 220; // Aumentei um pouco a altura pra caber a 3ª opção
+            int menuX = (screenWidth / 2) - (menuW / 2);
+            int menuY = (screenHeight / 2) - (menuH / 2);
+            
+            DrawRectangle(menuX, menuY, menuW, menuH, Fade(BLACK, 0.9f));
+            DrawRectangleLinesEx({(float)menuX, (float)menuY, (float)menuW, (float)menuH}, 2, WHITE);
+            
+            int titleW = MeasureText("PAUSED", 30);
+            DrawText("PAUSED", menuX + (menuW / 2) - (titleW / 2), menuY + 20, 30, WHITE);
+            
+            // Definição das Cores de Seleção AQUI:
+            Color corContinue = (pauseSelection == 0) ? WHITE : BLUE;
+            Color corSave = (pauseSelection == 1) ? WHITE : BLUE;
+            Color corQuit = (pauseSelection == 2) ? WHITE : BLUE;
+
+            // Textos das Opções AQUI:
+            DrawText("CONTINUE", menuX + (menuW / 2) - (MeasureText("CONTINUE", 20) / 2), menuY + 70, 20, corContinue);
+            DrawText("SAVE GAME", menuX + (menuW / 2) - (MeasureText("SAVE GAME", 20) / 2), menuY + 110, 20, corSave);
+            DrawText("QUIT", menuX + (menuW / 2) - (MeasureText("QUIT", 20) / 2), menuY + 150, 20, corQuit);
+            
+            DrawText("Use W/S para mover e ENTER para escolher", menuX + 15, menuY + 190, 10, GRAY);
+        }
+
         EndDrawing();
     }
     
@@ -2553,7 +2829,7 @@ int main(void)
     // ==============================================================
     if (iniciarViagemExecutavel) {
         // Entra na pasta do Space Shooter e executa ele de lá de dentro!
-        system("cd ../SpaceShooter && start SpaceGameplayOO.exe"); 
+        system("cd ../SpaceShooter && start SpaceGameplay.exe"); 
     }
 
     return 0;
