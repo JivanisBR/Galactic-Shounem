@@ -294,6 +294,7 @@ void SpawnLoot(Vector2 centroExplosao) {
 
 void CarregarPlanoDeVoo() {
     std::ifstream arquivo("viagem_data.txt");
+
     
     // Se por acaso o jogador abrir o SpaceShooter direto pelo executável sem passar pelo Mapa,
     // o arquivo não vai existir, então o jogo roda com valores padrão pra não crashar.
@@ -561,6 +562,11 @@ void desenhar() {
         if (distance_left < 0.0f) {
             distance_left = 0.0f;
             distance_traveled = distance_total;
+            
+            // GATILHO UNIVERSAL DE CHEGADA:
+            if (!boss && vida > 0) {
+                winn = true;
+            }
         }
     }
 
@@ -1559,15 +1565,31 @@ void desenhar() {
         if (winn) {
             pisc++;
             if (pisc < 100) {
-                DrawText("PRESS ENTER TO LAND", 440, 480, 20, WHITE);
+                DrawText("PRESS M TO RETURN TO MAP", 440, 460, 20, WHITE);
+                DrawText("PRESS ENTER TO LAND", 440, 500, 20, WHITE);
             }
-            if (pisc >= 200) {
-                pisc = 0;
-            }
-            if (IsKeyPressed(KEY_ENTER)) {
-                // INICIA LOADING SCREEN
-                // MUDA PARA GAMEPLAY EXPLORAÇÃO
-                quit = true;
+            if (pisc >= 200) pisc = 0;
+            
+            if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_M)) {
+                
+                // 1. Gera o arquivo de retorno com os status farmados na viagem
+                std::ofstream arqRetorno("pos_viagem.txt");
+                if (arqRetorno.is_open()) {
+                    arqRetorno << jogador->minhaNave->combustivelAtual << " "
+                               << jogador->minhaNave->escudoAtual << " "
+                               << jogador->minhaNave->invFerro << " "
+                               << jogador->minhaNave->invPrata << " "
+                               << jogador->minhaNave->invOuro << " "
+                               << jogador->dinheiro << "\n";
+                    arqRetorno.close();
+                }
+
+                // 2. Transição de volta ao mapa
+                if (IsKeyPressed(KEY_M)) {
+                    system("cd ../EstelarMap && start MapaEstelar.exe"); 
+                }
+                
+                quit = true; // Fecha o Space Shooter
             }
         }
         if (death_sound_delay > 0) {
