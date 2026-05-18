@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include "Player.h"
 #include "Nave.h"
+#include "../Shared/TelaUpgrades.h"
 
 //----------------------------------------------------------------------------------
 // ESTRUTURAS
@@ -424,7 +425,7 @@ void RotacionarPonto(Vector2& p, float anguloGraus) {
 
 // Controle da Rotação Galáctica
     float anguloGalaxia = 0.0f;
-    const float VELOCIDADE_ROTACAO = -0.01f; // Muito lento e sutil (aumente para testar)
+    const float VELOCIDADE_ROTACAO = -0.09f; // Muito lento e sutil (aumente para testar)
 
 
 // =====================================================================
@@ -598,6 +599,8 @@ int main(void)
     std::vector<ZonaPirata> zonasPiratas;
 
     Player* jogador = new Player("Kreits"); 
+    bool inUpgradeScreen = false;
+    TelaUpgrades* uiUpgrades = new TelaUpgrades(screenWidth, screenHeight, jogador->minhaNave);
     bool spawnDefinido = false; 
     int estrelaAtualPlayer = -1;
     int estrelaCasaPlayer = -1;
@@ -611,6 +614,13 @@ int main(void)
     bool emTelaInicial = true;
     int selectInicial = 0; // 0 = NEW, 1 = LOAD
     bool existeSave = FileExists("save.txt");
+
+    // AUTO-LOAD (Retorno do Space Shooter)
+    // ==============================================================
+    if (FileExists("../SpaceShooter/pos_viagem.txt")) {
+        emTelaInicial = false; // Pula o menu
+        selectInicial = 1;     // Força o LOAD do Save
+    }
 
     while (emTelaInicial && !WindowShouldClose()) {
         if (IsKeyPressed(KEY_DOWN) || IsKeyPressed(KEY_S)) {
@@ -1061,7 +1071,6 @@ int main(void)
         }
 
         // --- GERAÇÃO DE ZONAS PIRATAS  ---
-        std::vector<ZonaPirata> zonasPiratas;
         const int QTD_PIRATAS = 20; 
         int piratasCriados = 0;
         int tentativasPiratas = 0; // Trava de segurança para não rodar infinito se o mapa estiver vazio
@@ -1105,6 +1114,20 @@ int main(void)
             camera.target = posNaveAtual;
             focoCamera = -1;
             cameraTravada = true;
+        }
+
+        // --- ATUALIZAÇÃO PÓS-VIAGEM ---
+        // Se existir o arquivo do Space Shooter, absorve o loot e apaga o arquivo
+        std::ifstream arqRetorno("../SpaceShooter/pos_viagem.txt");
+        if (arqRetorno.is_open()) {
+            arqRetorno >> jogador->minhaNave->combustivelAtual 
+                       >> jogador->minhaNave->escudoAtual
+                       >> jogador->minhaNave->invFerro 
+                       >> jogador->minhaNave->invPrata 
+                       >> jogador->minhaNave->invOuro
+                       >> jogador->dinheiro;
+            arqRetorno.close();
+            remove("../SpaceShooter/pos_viagem.txt"); 
         }
     }
 
@@ -1158,7 +1181,6 @@ int main(void)
     }
 
     // --- VARIÁVEIS DA CASA ---
-    estrelaCasaPlayer = -1; 
     timerPingCasa = 0.0f; 
     
     // Variáveis de controle
@@ -1268,6 +1290,10 @@ int main(void)
             pauseSelection = 0; // Sempre reseta pro CONTINUE ao abrir
         }
 
+        if (IsKeyPressed(KEY_TAB) && !isPaused) {
+            inUpgradeScreen = !inUpgradeScreen;
+        }
+
         if (isPaused) {
             if (IsKeyPressed(KEY_DOWN) || IsKeyPressed(KEY_S)) {
                 pauseSelection++;
@@ -1291,7 +1317,7 @@ int main(void)
             }
         }
 
-        if (!isPaused) {
+        if (!isPaused && !inUpgradeScreen) {
         
             // =============================================================
             // --- INPUT & CÂMERA (CONTROLES DE MAPA TÁTICO) ---
@@ -2773,6 +2799,12 @@ int main(void)
                     for (const auto& b : exportBosses) arquivo << b.inicioAL << " " << b.fimAL << "\n";
 
                     arquivo.close();
+
+                    // PRE-SAVE DA VIAGEM: Salva a galáxia mudando sua posição para a estrela de destino!
+                    SalvarJogo(galaxia, jogador, zonasMeteoros, zonasPiratas, 
+                               destinoTracado, estrelaCasaPlayer, spawnDefinido,
+                               mostrarVisual, mostrarPosto, mostrarGuerreiros, 
+                               mostrarDeuses, mostrarEntidades, mostrarEstrelasNormais);
                     
                     // 2. ATIVA A FLAG PARA SAIR DO LOOP E LIMPAR A MEMÓRIA
                     iniciarViagemExecutavel = true;
@@ -2813,6 +2845,12 @@ int main(void)
             DrawText("QUIT", menuX + (menuW / 2) - (MeasureText("QUIT", 20) / 2), menuY + 150, 20, corQuit);
             
             DrawText("Use W/S para mover e ENTER para escolher", menuX + 15, menuY + 190, 10, GRAY);
+        }
+
+        // --- TELA DE UPGRADES (OVERLAY) ---
+        // =============================================================
+        if (inUpgradeScreen) {
+            uiUpgrades->AtualizarEDesenhar(jogador->minhaNave);
         }
 
         EndDrawing();
