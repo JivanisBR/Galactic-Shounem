@@ -239,51 +239,43 @@ void GenerateNebulaShape(Nebula& nebula, int particle_count, int star_particle_c
 }
 
 // --- LÓGICA DE DROPS DE MINÉRIOS ---
-// Recebe Vector2 para facilitar
 void SpawnLoot(Vector2 centroExplosao) {
     int chance = GetRandomValue(1, 100);
     TipoMinerio tipoAtual;
     int valorTotalRNG;
+    int numPedacos;
 
-    // 1. Determina o TIPO e o VALOR TOTAL (Sua lógica original perfeita)
+    // 1. Determina o TIPO, VALOR e QUANTIDADE FÍSICA
     if (chance <= 50) { 
         tipoAtual = FERRO; 
-        valorTotalRNG = GetRandomValue(10, 50);
+        valorTotalRNG = GetRandomValue(2, 10);
+        numPedacos = GetRandomValue(4, 8);
     } 
-    else if (chance <= 85) { 
+    else if (chance <= 85) {
         tipoAtual = PRATA; 
-        valorTotalRNG = GetRandomValue(5, 20);
+        valorTotalRNG = GetRandomValue(1, 5);
+        numPedacos = GetRandomValue(2, 5);
     } 
     else { 
         tipoAtual = OURO; 
-        valorTotalRNG = GetRandomValue(1, 5);
+        valorTotalRNG = 1; 
+        numPedacos = 1; 
     }
 
-    // 2. Define em quantos pedaços físicos o meteoro vai quebrar
-    // Vamos gerar entre 4 e 8 pedacinhos para espalhar bem
-    int numPedacos = GetRandomValue(4, 8);
-
-    // Calcula quanto cada pedacinho vale (divisão inteira)
     int valorBase = valorTotalRNG / numPedacos;
-    // O resto da divisão a gente distribui para não perder nenhum pontinho
     int resto = valorTotalRNG % numPedacos;
 
-    // 3. Gera as partículas físicas
+    // 2. Gera as partículas físicas
     for(int i = 0; i < numPedacos; i++) {
         Drop d;
         d.pos = centroExplosao;
         d.tipo = tipoAtual;
         
-        // Distribui o valor: os primeiros pegam o resto da divisão
         d.valor = valorBase + (i < resto ? 1 : 0);
-        // Segurança: garante que vale pelo menos 1
         if (d.valor < 1) d.valor = 1; 
 
-        // FÍSICA DA EXPLOSÃO (Chafariz)
-        // Ângulo entre 180 (Esquerda) e 360 (Direita), passando por 270 (Cima)
-        // Isso faz eles sempre serem jogados "contra" o movimento da nave
+        // FÍSICA DA EXPLOSÃO
         float ang = GetRandomValue(180, 360) * DEG2RAD;
-        // Aumentei um pouco a força mínima (de 30 pra 50) pra garantir que subam
         float speed = GetRandomValue(50, 90) / 10.0f; 
         d.vel = { cosf(ang) * speed, sinf(ang) * speed };
 
