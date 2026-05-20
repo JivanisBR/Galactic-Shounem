@@ -706,8 +706,6 @@ int main(void)
         
         nebulosas.push_back(n);
     }*/
-
-    // ==================================================================
     
     // ==================================================================
     // GERAÇÃO CONTROLADA POR MAPA DE LÓGICA (RGB)
@@ -733,6 +731,22 @@ int main(void)
     // BIFURCAÇÃO MESTRA: NEW GAME vs LOAD GAME
     // ==================================================================
     if (selectInicial == 0) {
+
+        // --- RESET DE INVENTÁRIO E STATUS PARA NOVO JOGO ---
+        jogador->dinheiro = 0.0f;
+        jogador->pdlBase = 50000; // Seu valor inicial padrão de Ki
+        jogador->pdlAtual = jogador->pdlBase;
+        
+        jogador->minhaNave->invFerro = 0;
+        jogador->minhaNave->invPrata = 0;
+        jogador->minhaNave->invOuro = 0;
+        
+        // Reseta todos os levels de upgrade nos eixos e armas para o nível 1
+        jogador->minhaNave->ResetarUpgrades(); 
+        
+        // Garante tanque cheio e escudos operacionais para a nova jornada
+        jogador->minhaNave->combustivelAtual = jogador->minhaNave->combustivelMaximo;
+        jogador->minhaNave->escudoAtual = jogador->minhaNave->escudoMaximo;
 
         const int LIMITE_ESTRELAS = 4000;
 
