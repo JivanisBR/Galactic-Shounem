@@ -10,6 +10,7 @@ struct BotaoUpgrade {
     Color corHover;
     std::string nome;
     int* levelAtual;
+    int tipoCusto;
     void (*AcaoUpgrade)(Nave&);
 };
 
