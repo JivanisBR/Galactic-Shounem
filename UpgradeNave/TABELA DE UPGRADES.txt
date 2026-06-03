@@ -1,0 +1,71 @@
+TABELA DE UPGRADES
+cadencia de tiro e escudo maximo;
+força do turbo e eficiencia do combustivel;
+capacidade do combustivel e condensador;: 
+mobilidade e eficiencia do freio;
+
+fe(ferro), pt(prata), au(ouro)
+
+cadencia de tiro e escudo maximo:
+nv2: 2au
+3: 4au
+4: 8au
+5: 16au
+6: 32au
+7: 64au
+8: 120au
+9: 220au
+10: 400au
+11: 700au
+12: 1000au
+13: 1400au
+14: 2000au
+15: 3000au
+
+força do turbo e eficiencia do combustivel:
+nv2: 10pt
+3: 20pt
+4: 40pt
+5: 80pt
+6: 160pt
+7: 320pt + 4au
+8: 608pt + 8au
+9: 1094pt + 16au
+10: 1860pt + 32au
+11: 2790pt + 64au
+12: 3620pt + 100au
+13: 4440pt + 130au
+14: 5000pt + 160au
+15: 5500pt + 180au 
+
+capacidade do combustivel e condensador:
+nv2: 25 fe + 5pt
+3: 50 fe + 10pt
+4: 100 fe + 20pt
+5: 200 fe + 40pt
+6: 400 fe + 80pt
+7: 800 fe + 160pt
+8: 1600 fe + 320pt
+9: 3000 fe + 640pt
+10: 6000 fe + 900pt
+11: 8000 fe + 1500pt
+12: 13000 fe + 3000pt
+13: 18000 fe + 5000pt
+14: 25000 fe + 8000pt
+15: 35000 fe + 12000pt
+
+mobilidade e eficiencia do freio:
+nv2: 10fe + 5pt +1au
+3: 20fe + 10pt +2au
+4: 40fe + 20pt +4au
+5: 80fe + 40pt +8au
+6: 160fe + 80pt +16au
+7: 320fe + 160pt +32au
+8: 640fe + 320pt +64au
+9: 1200fe + 600pt +100au
+10: 2000fe + 900pt +200au
+11: 4000fe + 1300pt +400au
+12: 8000fe + 2000pt +800au
+13: 13000fe + 2800pt +1300au
+14: 18000fe + 3500pt +1800au
+15: 25000fe + 4000pt +2500au
