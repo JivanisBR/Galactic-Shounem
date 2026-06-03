@@ -51,6 +51,8 @@ struct Drop {
     int valor;   // Quanto este pedacinho vale
     TipoMinerio tipo;
     bool isCombustivel = false;
+    bool sendoColetado = false; 
+    float escalaVis = 1.0f;
 };
 // A lista e os inventários continuam iguais:
 std::vector<Drop> drops;
@@ -304,7 +306,15 @@ void CarregarPlanoDeVoo() {
         else if (chave == "NAVE_COMBUSTIVEL") { arquivo >> jogador->minhaNave->combustivelAtual >> jogador->minhaNave->combustivelMaximo; }
         else if (chave == "NAVE_ESCUDO") { arquivo >> jogador->minhaNave->escudoAtual >> jogador->minhaNave->escudoMaximo; }
         else if (chave == "NAVE_MINERIOS") { arquivo >> jogador->minhaNave->invFerro >> jogador->minhaNave->invPrata >> jogador->minhaNave->invOuro; }
-       // else if (chave == "NAVE_UPGRADES") { arquivo >> jogador->minhaNave->forcaTurbo >> jogador->minhaNave->eficienciaCombustivel >> jogador->minhaNave->taxaConsumoBase; }
+        else if (chave == "NAVE_CONDENSADOR") { arquivo >> jogador->minhaNave->timerCondensador >> jogador->minhaNave->condensadorLevel; }
+        else if (chave == "NAVE_UPGRADES") { 
+            arquivo >> jogador->minhaNave->forcaTurbo 
+                    >> jogador->minhaNave->eficienciaCombustivel 
+                    >> jogador->minhaNave->taxaConsumoBase
+                    >> jogador->minhaNave->levelCanhaoExtra
+                    >> jogador->minhaNave->levelTiro
+                    >> jogador->minhaNave->levelVelocidadeTiro; 
+        }
         
         else if (chave == "VIAGEM_DISTANCIA") { 
             int distAL; arquivo >> distAL; 
@@ -375,26 +385,32 @@ void controle() {
         }
     } 
     else {
-        // --- LÓGICA DE DISPARO (CADÊNCIA) ---
-        // Diminui o tempo de espera a cada frame
-        if (cooldownTiro > 0) cooldownTiro -= 1.0f * mult;
-
         // Se apertou ESPAÇO e o tempo de espera acabou
+        if (cooldownTiro > 0) cooldownTiro -= 1.0f * mult;
         if (IsKeyDown(KEY_SPACE) && cooldownTiro <= 0) {
-            // Cria um novo tiro na ponta da nave
-            Tiro novoTiro;
-            novoTiro.x = (float)nave_x + 48;
-            novoTiro.y = (float)nave_y;
-            novoTiro.ativo = true;
             
-            // Adiciona na lista
-            tiros.push_back(novoTiro);
+            int qtdTiros = jogador->minhaNave->levelCanhaoExtra;
+            float espacamento = 12.0f; // Distância entre um tiro e outro (ajuste se quiser)
             
-            // Toca o som
+            float larguraTotal = (qtdTiros - 1) * espacamento;
+            float centroNave = (float)nave_x + 48.0f; // O centro exato da sua nave
+            float inicioX = centroNave - (larguraTotal / 2.0f);
+
+            // Cria os tiros alinhados lado a lado
+            for (int i = 0; i < qtdTiros; i++) {
+                Tiro novoTiro = {};
+                novoTiro.x = inicioX + (i * espacamento);
+                novoTiro.y = (float)nave_y+60.0f;
+                novoTiro.ativo = true;
+                
+                tiros.push_back(novoTiro);
+            }
+            
+            // Toca o som apenas 1 vez por disparo (fora do loop pra não estourar o áudio)
             PlaySound(sob[sob_index]);
             sob_index = (sob_index + 1) % 5;
             
-            //cadencia do tiro
+            // Cadência do tiro
             cooldownTiro = 50.0f - (jogador->minhaNave->levelTiro * 5.0f); 
             if (cooldownTiro < 5.0f) cooldownTiro = 5.0f;
         }
@@ -479,6 +495,11 @@ void desenhar() {
     // 1. Atualiza a Física da Nave no Espaço (Se estiver viva e não tiver chegado)
     if (distance_left > 0 && vida > 0 && !winn) {
         jogador->minhaNave->AtualizarVoo(GetFrameTime() * mult, turbo_on, freio_on);
+
+        // --- LÓGICA DO CONDENSADOR NO SPACE SHOOTER ---
+        if (jogador->minhaNave->condensadorLevel > 0) {
+            jogador->minhaNave->AtualizarCondensador(GetFrameTime());
+        }
     }
 
     // 2. Feedback Visual (Fator de Velocidade do Mundo)
@@ -496,14 +517,15 @@ void desenhar() {
     // =================================================================
     static float timerLiberarNave = 0.0f;
     static bool dropouGasol = false;
+    static bool dropouDin = false;
     bool bloqueioBoss = false;
 
     if (boss) {
-        // ATENÇÃO: Substitua "vidaAtual" caso a variável de HP do seu chefe tenha outro nome!
         if (chefeFinal->vida > 0) {
             bloqueioBoss = true;
             timerLiberarNave = 0.0f;
             dropouGasol = false;
+            dropouDin = false;
         } 
         else {
             // O Boss explodiu (HP <= 0), mas as peças ainda estão caindo...
@@ -516,14 +538,20 @@ void desenhar() {
                     float ang = GetRandomValue(180, 360) * DEG2RAD; 
                     float spd = GetRandomValue(30, 60) / 10.0f; 
                     d.vel = { cosf(ang) * spd, sinf(ang) * spd };
-                    d.isCombustivel = true; // <--- É COMBUSTÍVEL
-                    d.valor = 15; // Cada bolha recupera 15 de combustível
+                    d.isCombustivel = true;
+                    d.valor = 15;
                     drops.push_back(d);
                 }
                 dropouGasol = true;
             }
 
-            // 2. Timer de Liberação da Nave
+            // 2. Drop de dinheiro na conta do jogador (Roda uma única vez)
+            if (!dropouDin) {
+                jogador->dinheiro += GetRandomValue(10,60);
+                dropouDin = true;
+            }
+
+            // 3. Timer de Liberação da Nave
             timerLiberarNave += GetFrameTime();
             
             if (timerLiberarNave < 3.0f) {
@@ -554,11 +582,10 @@ void desenhar() {
         if (distance_left < 0.0f) {
             distance_left = 0.0f;
             distance_traveled = distance_total;
-            
-            // GATILHO UNIVERSAL DE CHEGADA:
-            if (!boss && vida > 0) {
-                winn = true;
-            }
+        }
+        // GATILHO UNIVERSAL DE CHEGADA:
+        if (distance_left<0.1 && !boss && !enemy) {
+            winn = true;
         }
     }
 
@@ -591,9 +618,21 @@ void desenhar() {
         if (distance_traveled >= m.inicioAL - distAviso && distance_traveled < m.inicioAL) avisoMeteoro = true;
         if (distance_traveled >= m.inicioAL && distance_traveled <= m.fimAL) { temCinturao = true; }
     }
-    for (const auto& p : planoPiratas) {
-        if (distance_traveled >= p.inicioAL - distAviso && distance_traveled < p.inicioAL) avisoPirata = true;
-        if (distance_traveled >= p.inicioAL && distance_traveled <= p.fimAL) inPirateZone = true;
+
+    int indexZonaPirataAtual = -1; // Variável para rastrear qual zona estamos
+    for (int i = 0; i < (int)planoPiratas.size(); i++) {
+        auto& p = planoPiratas[i];
+        
+        // Passou direto ou já resolveu? Queima a zona.
+        if (distance_traveled > p.fimAL && !p.processado) p.processado = true;
+        
+        if (!p.processado) {
+            if (distance_traveled >= p.inicioAL - distAviso && distance_traveled < p.inicioAL) avisoPirata = true;
+            if (distance_traveled >= p.inicioAL && distance_traveled <= p.fimAL) { 
+                inPirateZone = true; 
+                indexZonaPirataAtual = i; // Salva o ID da zona em que o player está
+            }
+        }
     }
 
     // =================================================================
@@ -785,7 +824,9 @@ void desenhar() {
         DrawText("Break: L", 20, 110, 20, WHITE);
         DrawText(TextFormat("VELOCIDADE: %d km/s", (int)jogador->minhaNave->velocidadeAtual), 20, 140, 20, SKYBLUE);
         DrawText(TextFormat("COMBUSTÍVEL: %d / %d", (int)jogador->minhaNave->combustivelAtual, (int)jogador->minhaNave->combustivelMaximo), 20, 160, 20, ORANGE);
-        DrawText(TextFormat("ESCUDO: %d N", jogador->minhaNave->escudoAtual), 20, 180, 20, SKYBLUE); 
+        DrawText(TextFormat("ESCUDO: %d N", jogador->minhaNave->escudoAtual), 20, 180, 20, SKYBLUE);
+        DrawText(TextFormat("CONDENSADOR: %d s", (int)jogador->minhaNave->timerCondensador), 20, 200, 20, SKYBLUE);
+        DrawText(TextFormat("DINHEIRO: $%.2f", jogador->dinheiro), 20, 220, 20, GREEN);
         
         // Sincroniza a morte: Se o escudo zerar, a 'vida' zera para disparar a tela de Game Over
         if (jogador->minhaNave->escudoAtual <= 0) vida = 0;
@@ -877,17 +918,28 @@ void desenhar() {
             BeginBlendMode(BLEND_ADDITIVE);
             
             for (int i = 0; i < (int)tiros.size(); i++) {
-                // 1. DESENHO (Visual que criamos antes)
+                // 1. CÁLCULO DE VELOCIDADE E ESTICAMENTO BASEADO NO UPGRADE
+                int lvlVel = jogador->minhaNave->levelVelocidadeTiro;
+                float velY = 10.0f + (lvlVel * 1.2f);           // Fica mais rápido a cada nível
+                float fatorEsticamento = 1.0f + (lvlVel); // Estica o sprite horizontalmente/verticalmente
+
+                float alturaLaser = 45.0f * fatorEsticamento;
+                float raioYEllipse = 15.0f * fatorEsticamento;
+
+                // 2. DESENHO ATUALIZADO (EFEITO LASER COMPRIDO)
+                BeginBlendMode(BLEND_ADDITIVE);
                 DrawTexturePro(texParticula, 
                     {0, 0, 64, 64}, 
-                    {tiros[i].x, tiros[i].y, 12.0f, 45.0f}, 
-                    {6.0f, 22.5f}, 
+                    {tiros[i].x, tiros[i].y, 12.0f, alturaLaser}, 
+                    {6.0f, alturaLaser / 2.0f}, 
                     0.0f, 
-                    ColorAlpha(ORANGE, 0.5f));
-                DrawEllipse(tiros[i].x, tiros[i].y, 2.0f, 15.0f, WHITE);
+                    ColorAlpha(RED, 0.6f));
+                EndBlendMode();
+                
+                DrawEllipse(tiros[i].x, tiros[i].y, 2.0f, raioYEllipse, WHITE);
 
-                // 2. MOVIMENTO
-                tiros[i].y -= (tvel * 2) * mult; // Multipliquei tvel por 2 pra ficar rápido
+                // 3. MOVIMENTO COM A NOVA VELOCIDADE
+                tiros[i].y -= velY * mult;
 
                 // 3. REMOVE SE SAIU DA TELA (Otimização)
                 if (tiros[i].y < -50) {
@@ -1125,64 +1177,109 @@ void desenhar() {
 
     for (int i = 0; i < (int)drops.size(); i++) {
         
-        // --- FÍSICA ---
-        drops[i].pos.x += drops[i].vel.x * mult;
-        drops[i].pos.y += drops[i].vel.y * mult;
-
-        drops[i].vel.x *= 0.96f;
-        drops[i].vel.y *= 0.96f;
-
-        // SE FOR COMBUSTÍVEL, DESCE DEVAGAR INDEPENDENTE DA NAVE. SE FOR LOOT, É ENGOLIDO PELA INÉRCIA.
-        if (drops[i].isCombustivel) drops[i].pos.y += 2.0f * mult; 
-        else drops[i].pos.y += (3.0f * world_speed_factor) * mult;
-
-        // --- DESENHO COM BRILHO ---
-        Color corLoot, corBorda;
-        float raio;
-        
-        if (drops[i].isCombustivel) {
-            corLoot = RED; corBorda = RED; raio = 8.0f; // Combustível Vermelho Vivo
-        } else if (drops[i].tipo == FERRO) { 
-            corLoot = {100, 100, 100, 255}; corBorda = WHITE; raio = 6.0f; 
-        } else if (drops[i].tipo == PRATA) { 
-            corLoot = {200, 200, 255, 255}; corBorda = BLUE; raio = 7.0f; 
-        } else { 
-            corLoot = GOLD; corBorda = ORANGE; raio = 8.0f; 
-        }
-
-        DrawCircleV(drops[i].pos, raio + 3, ColorAlpha(corBorda, 0.4f)); 
-        DrawCircleV(drops[i].pos, raio, corLoot);
-
-        // --- COLETA (HITBOX RETANGULAR LARGA) ---
-        // Centro da nave
+        // Alvo da sucção (Centro da nave)
         float naveCenterX = (float)nave_x + 24;
         float naveCenterY = (float)nave_y + 40;
 
-        // Verifica a distância X e Y separadamente
-        // Distância X < 60 (Significa 120 pixels de largura total de coleta!)
-        // Distância Y < 40 (Significa 80 pixels de altura)
-        if (fabs(drops[i].pos.x - naveCenterX) < 60 && 
-            fabs(drops[i].pos.y - naveCenterY) < 40) {
-            
-            if (drops[i].isCombustivel) {
-                jogador->minhaNave->combustivelAtual += drops[i].valor;
-                // Não deixa passar do limite do tanque
-                if (jogador->minhaNave->combustivelAtual > jogador->minhaNave->combustivelMaximo) {
-                    jogador->minhaNave->combustivelAtual = jogador->minhaNave->combustivelMaximo;
-                }
-            } else {
-                if (drops[i].tipo == FERRO) jogador->minhaNave->GuardarMinerio(FERRO, drops[i].valor);
-                else if (drops[i].tipo == PRATA) jogador->minhaNave->GuardarMinerio(PRATA, drops[i].valor);
-                else jogador->minhaNave->GuardarMinerio(OURO, drops[i].valor);
-            }
+        // --- CÁLCULO DA DROPBOX DINÂMICA (ÍMÃ COLETOR) ---
+            int lvlIma = jogador->minhaNave->levelIma;
 
-            drops.erase(drops.begin() + i);
-            i--;
-            continue;
+        // --- 1. LÓGICA DE FÍSICA E COLETA ---
+        if (!drops[i].sendoColetado) {
+            // FÍSICA NORMAL
+            drops[i].pos.x += drops[i].vel.x * mult;
+            drops[i].pos.y += drops[i].vel.y * mult;
+
+            drops[i].vel.x *= 0.96f;
+            drops[i].vel.y *= 0.96f;
+
+            if (drops[i].isCombustivel) drops[i].pos.y += 2.0f * mult; 
+            else drops[i].pos.y += (3.0f * world_speed_factor) * mult;
+            
+            // Tamanho base aumenta a cada nível upado (+20px largura / +20px altura por nível)
+            float dropboxW = 50.0f + (lvlIma * 20.0f); 
+            float dropboxH = 50.0f + (lvlIma * 20.0f);
+
+            // GATILHO DA SUCÇÃO (Dropbox Ampliada)
+            if (fabs(drops[i].pos.x - naveCenterX) < dropboxW && 
+                fabs(drops[i].pos.y - naveCenterY) < dropboxH) {
+                drops[i].sendoColetado = true; // Inicia a animação de atração
+            }
+        } 
+        else {
+            // 1. ATRAÇÃO: Interpola a posição do drop em direção ao centro da nave
+            drops[i].pos.x += (naveCenterX - drops[i].pos.x) * (0.03f+(lvlIma/300.0f)) * mult;
+            drops[i].pos.y += (naveCenterY - drops[i].pos.y) * (0.03f+(lvlIma/300.0f)) * mult;
+            
+            // Calcula a distância atual até o centro da nave
+            float distX = fabs(drops[i].pos.x - naveCenterX);
+            float distY = fabs(drops[i].pos.y - naveCenterY);
+
+            // 2. ENCOLHIMENTO: Só encolhe se estiver muito perto (dentro do miolo da nave)
+            if (distX < 25.0f && distY < 25.0f) {
+                
+                // Encolhe mais rápido, já que está perto de entrar
+                drops[i].escalaVis -= 0.1f * mult;
+
+                // Fim da Animação: Debita no inventário e apaga
+                if (drops[i].escalaVis <= 0.05f) {
+                    if (drops[i].isCombustivel) {
+                        jogador->minhaNave->combustivelAtual += drops[i].valor;
+                        if (jogador->minhaNave->combustivelAtual > jogador->minhaNave->combustivelMaximo) {
+                            jogador->minhaNave->combustivelAtual = jogador->minhaNave->combustivelMaximo;
+                        }
+                    } else {
+                        jogador->minhaNave->GuardarMinerio(drops[i].tipo, drops[i].valor);
+                    }
+
+                    drops.erase(drops.begin() + i);
+                    i--;
+                    continue;
+                }
+            }
         }
 
-        // --- LIMPEZA ---
-        if (drops[i].pos.y > 750) {
+        // --- 2. DESENHO COM BRILHO ---
+        Color corGlow, corMeio, corCentro;
+        float tamanhoGlow, tamanhoMeio, tamanhoCentro;
+        
+        float pulsoLoot = sin(GetTime() * 10.0f + i) * 29.0f; 
+
+        if (drops[i].isCombustivel) {
+            corGlow = RED; corMeio = ORANGE; corCentro = YELLOW;
+            tamanhoGlow = 100.0f; tamanhoMeio = 50.0f; tamanhoCentro = 5.0f;
+        } else if (drops[i].tipo == FERRO) { 
+            corGlow = GRAY; corMeio = LIGHTGRAY; corCentro = WHITE;
+            tamanhoGlow = 50.0f; tamanhoMeio = 25.0f; tamanhoCentro = 12.0f;
+        } else if (drops[i].tipo == PRATA) { 
+            corGlow = SKYBLUE; corMeio = BLUE; corCentro = DARKBLUE;
+            tamanhoGlow = 45.0f; tamanhoMeio = 22.0f; tamanhoCentro = 13.0f;
+        } else { // OURO
+            corGlow = ORANGE; corMeio = YELLOW; corCentro = WHITE;
+            tamanhoGlow = 100.0f; tamanhoMeio = 50.0f; tamanhoCentro = 25.0f;
+        }
+
+        tamanhoGlow += pulsoLoot;
+
+        // O SEGREDO: Multiplica os tamanhos pela escala da animação
+        tamanhoGlow *= drops[i].escalaVis;
+        tamanhoMeio *= drops[i].escalaVis;
+        tamanhoCentro *= drops[i].escalaVis;
+
+        DrawTexturePro(texParticula, {0, 0, 64, 64}, 
+            {drops[i].pos.x, drops[i].pos.y, tamanhoGlow, tamanhoGlow}, 
+            {tamanhoGlow / 2.0f, tamanhoGlow / 2.0f}, 0.0f, ColorAlpha(corGlow, 0.4f));
+            
+        DrawTexturePro(texParticula, {0, 0, 64, 64}, 
+            {drops[i].pos.x, drops[i].pos.y, tamanhoMeio, tamanhoMeio}, 
+            {tamanhoMeio / 2.0f, tamanhoMeio / 2.0f}, 0.0f, ColorAlpha(corMeio, 0.8f));
+            
+        DrawTexturePro(texParticula, {0, 0, 64, 64}, 
+            {drops[i].pos.x, drops[i].pos.y, tamanhoCentro, tamanhoCentro}, 
+            {tamanhoCentro / 2.0f, tamanhoCentro / 2.0f}, 0.0f, corCentro);
+
+        // --- 3. LIMPEZA DA TELA ---
+        if (!drops[i].sendoColetado && drops[i].pos.y > 750) {
             drops.erase(drops.begin() + i);
             i--;
         }
@@ -1248,22 +1345,22 @@ void desenhar() {
         int fontSize = 15; 
 
         if (avisoMeteoro) {
-            const char* txt = "CINTURAO DE ASTEROIDES A FRENTE: REDUZA A VELOCIDADE!";
+            const char* txt = "CINTURAO DE ASTEROIDES A FRENTE.\n REDUZIR A VELOCIDADE!";
             int txtW = MeasureText(txt, fontSize);
             DrawText(txt, (GetScreenWidth() / 2) - (txtW / 2), avisoY, fontSize, RED);
         } 
         else if (avisoPirata) {
-            const char* txt = "NAVE INIMIGA ANALISANDO PADRÃO DE VOO!";
+            const char* txt = "NAVE INIMIGA ANALISANDO PADRÃO DE VOO.\n PREPARAR FUGA!";
             int txtW = MeasureText(txt, fontSize);
             DrawText(txt, (GetScreenWidth() / 2) - (txtW / 2), avisoY, fontSize, PURPLE);
         } 
         else if (avisoBoss) {
-            const char* txt = "ENTRANDO NO ABISMO GALÁTICO!";
+            const char* txt = "ENTRANDO NO ABISMO GALÁTICO.\n SAIR O QUANTO ANTES";
             int txtW = MeasureText(txt, fontSize);
             DrawText(txt, (GetScreenWidth() / 2) - (txtW / 2), avisoY, fontSize, DARKGRAY);
         } 
         else if (timerZonaSegura > 0.0f) {
-            const char* txt = "ZONA SEGURA: PODE ACELERAR!";
+            const char* txt = "ZONA SEGURA";
             int txtW = MeasureText(txt, fontSize);
             DrawText(txt, (GetScreenWidth() / 2) - (txtW / 2), avisoY, fontSize, GREEN);
         }
@@ -1429,19 +1526,119 @@ void desenhar() {
         // --- ATIVADORES DE COMBATE ---
         // =================================================================
 
-        // 1. GATILHO DO PIRATA
+        // 1. GATILHO DO PIRATA (MINIGAME DE EVASÃO TIPO UFC)
         static bool pirataResetadoNestaZona = false;
+        static bool pirataAnalisando = false;
+        static bool pirataEscapou = false;
+        static float velInicialEvento = 0.0f;
+        
+        static float progressoPlayer = 0.0f;
+        static float progressoPirata = 0.0f;
+        
+        static float radarPirataPos = 0.0f;
+        static float radarPirataGap = 100.0f; // Tamanho da zona de captura
+        static float timerReacaoPirata = 0.0f;
+        static float velRastreio = 50.0f; // Velocidade máxima que o radar do pirata consegue se mover (km/s)
+
         if (inPirateZone) {
-            if (!pirataResetadoNestaZona) {
+            if (!pirataResetadoNestaZona && !pirataAnalisando && !pirataEscapou && !enemy && !enemy_defeated) {
+                pirataAnalisando = true;
+                progressoPlayer = 0.0f;
+                progressoPirata = 0.0f;
+                radarPirataPos = jogador->minhaNave->velocidadeAtual;
+                velInicialEvento = jogador->minhaNave->velocidadeAtual;
+                timerReacaoPirata = 1.0f; // 1 segundo pro pirata acordar no início
+            }
+        } else {
+            pirataResetadoNestaZona = false;
+            pirataEscapou = false;
+            pirataAnalisando = false;
+        }
+
+        if (pirataAnalisando) {
+            float dt = GetFrameTime();
+            float velAtual = jogador->minhaNave->velocidadeAtual;
+            
+            // 1. Verifica se o player está dentro da zona vermelha
+            float distParaRadar = fabsf(velAtual - radarPirataPos);
+            bool dentroDoRadar = (distParaRadar <= radarPirataGap / 2.0f);
+
+            // 2. IA do Pirata
+            if (dentroDoRadar) {
+                float velLenta = velRastreio * 0.05f * dt;
+                if (radarPirataPos < velAtual) { radarPirataPos += velLenta; if (radarPirataPos > velAtual) radarPirataPos = velAtual; }
+                if (radarPirataPos > velAtual) { radarPirataPos -= velLenta; if (radarPirataPos < velAtual) radarPirataPos = velAtual; }
+                
+                timerReacaoPirata = (float)GetRandomValue(3, 8) / 10.0f; 
+                progressoPirata += 10.0f * dt; 
+            } else {
+                if (timerReacaoPirata > 0.0f) {
+                    timerReacaoPirata -= dt; 
+                } else {
+                    float velRapida = velRastreio * dt;
+                    if (radarPirataPos < velAtual) { radarPirataPos += velRapida; if (radarPirataPos > velAtual) radarPirataPos = velAtual; }
+                    if (radarPirataPos > velAtual) { radarPirataPos -= velRapida; if (radarPirataPos < velAtual) radarPirataPos = velAtual; }
+                }
+                progressoPlayer += 10.0f * dt; 
+            }
+
+            // 3. Condições de Fim
+            if (progressoPlayer >= 100.0f) {
+                pirataAnalisando = false;
+                pirataEscapou = true;
+                pirataResetadoNestaZona = true;
+                if (indexZonaPirataAtual != -1) planoPiratas[indexZonaPirataAtual].processado = true; // Queima a zona
+            } else if (progressoPirata >= 100.0f) {
+                pirataAnalisando = false;
                 enemy = true;
-                enemylife = 5;
+                enemylife = 10; 
                 enemy_defeated = false;
                 Color paletaInimigos[] = {WHITE, RED, GREEN, BLUE, YELLOW, ORANGE, PURPLE};
                 enemyColor = paletaInimigos[GetRandomValue(0, 6)]; 
                 pirataResetadoNestaZona = true;
+                if (indexZonaPirataAtual != -1) planoPiratas[indexZonaPirataAtual].processado = true; // Queima a zona
             }
-        } else {
-            pirataResetadoNestaZona = false; // Se tiver outra zona roxa, spawna outro!
+
+            // --- DESENHO DA UI ---
+            float barW = 20.0f;
+            float barH = 300.0f;
+            float barX = 40.0f; 
+            float barY = (GetScreenHeight() / 2.0f) - (barH / 2.0f);
+            
+            float alcanceVisual = 1000.0f; 
+            float pixelsPorKm = barH / alcanceVisual;
+
+            DrawRectangle(barX, barY, barW, barH, ColorAlpha(GRAY, 0.4f));
+            DrawRectangleLines(barX, barY, barW, barH, WHITE);
+
+            // Função que mapeia qualquer velocidade usando o início do evento como o centro exato da barra
+            auto MapearY = [&](float vel) {
+                float diff = vel - velInicialEvento;
+                float y = (barY + barH / 2.0f) - (diff * pixelsPorKm);
+                if (y < barY) y = barY;
+                if (y > barY + barH) y = barY + barH;
+                return y;
+            };
+
+            // Zona do Pirata (Retângulo vermelho móvel)
+            float yTopPirata = MapearY(radarPirataPos + radarPirataGap / 2.0f);
+            float yBotPirata = MapearY(radarPirataPos - radarPirataGap / 2.0f);
+            float hPirata = yBotPirata - yTopPirata; 
+            
+            // Corrige altura caso o retângulo esteja cortado nas bordas
+            if (hPirata < 0) hPirata = -hPirata;
+            
+            DrawRectangle(barX, yTopPirata, barW, hPirata, ColorAlpha(RED, 0.6f));
+            DrawRectangleLines(barX, yTopPirata, barW, hPirata, MAROON);
+
+            // Bolinha do Player (Livre pela barra)
+            float playerY = MapearY(velAtual);
+            DrawCircle(barX + barW/2.0f, playerY, 8.0f, WHITE);
+            DrawCircleLines(barX + barW/2.0f, playerY, 8.0f, BLACK);
+
+            // Textos HUD
+            DrawText(TextFormat("FUGA: %d%%", (int)progressoPlayer), barX + 40, barY + 40, 15, GREEN);
+            DrawText(TextFormat("LOCK: %d%%", (int)progressoPirata), barX + 40, barY + 60, 15, PURPLE);
         }
 
         if ((boss || boss_defeated) && !winn) {
@@ -1512,18 +1709,16 @@ void desenhar() {
                     drops.push_back(d);
                 }
                 // 2.5 DROP DE COMBUSTÍVEL (Exclusivo do Inimigo)
-                for(int j=0; j<3; j++) { // Solta 3 bolhas de energia
+                for(int j=0; j<3; j++) { // Solta 3 orbs
                     Drop d; 
                     d.pos = {(float)enemyx+30, (float)enemyy+20};
                     float ang = GetRandomValue(180, 360) * DEG2RAD; 
                     float spd = GetRandomValue(30, 60) / 10.0f; 
                     d.vel = { cosf(ang) * spd, sinf(ang) * spd };
-                    d.isCombustivel = true; // <--- É COMBUSTÍVEL
-                    d.valor = 15; // Cada bolha recupera 15 de combustível
+                    d.isCombustivel = true;
+                    d.valor = 15; // Cada orb recupera 15 de combustível
                     drops.push_back(d);
                 }
-
-                pontos += 5; // Recompensa extra
                 enemy = false;
                 enemy_defeated = true; // Trava ativada! Nunca mais renasce.
             } 
@@ -1562,9 +1757,17 @@ void desenhar() {
             }
             if (pisc >= 200) pisc = 0;
             
+            if (winn) {
+            pisc++;
+            if (pisc < 100) {
+                DrawText("PRESS M TO RETURN TO MAP", 440, 460, 20, WHITE);
+                DrawText("PRESS ENTER TO LAND", 440, 500, 20, WHITE);
+            }
+            if (pisc >= 200) pisc = 0;
+            
             if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_M)) {
                 
-                // 1. Gera o arquivo de retorno com os status farmados na viagem
+                // 1. Gera o arquivo de retorno completo para o mapa receber sem bugar
                 std::ofstream arqRetorno("pos_viagem.txt");
                 if (arqRetorno.is_open()) {
                     arqRetorno << jogador->minhaNave->combustivelAtual << " "
@@ -1572,17 +1775,19 @@ void desenhar() {
                                << jogador->minhaNave->invFerro << " "
                                << jogador->minhaNave->invPrata << " "
                                << jogador->minhaNave->invOuro << " "
-                               << jogador->dinheiro << "\n";
+                               << jogador->dinheiro << " "
+                               << jogador->minhaNave->velocidadeAtual << " "
+                               << jogador->minhaNave->timerCondensador << "\n";
                     arqRetorno.close();
                 }
 
-                // 2. Transição de volta ao mapa
                 if (IsKeyPressed(KEY_M)) {
                     system("cd ../EstelarMap && start MapaEstelar.exe"); 
                 }
                 
-                quit = true; // Fecha o Space Shooter
+                quit = true; 
             }
+        }
         }
         if (death_sound_delay > 0) {
             death_sound_delay--;
@@ -1713,8 +1918,8 @@ int main() {
     // --- PUXAMENTO DOS DADOS DO MAPA ESTELAR ---
     chefeFinal = new Boss();
     jogador = new Player("Piloto"); 
-    CarregarPlanoDeVoo(); 
     jogador->minhaNave->CarregarStatus();
+    CarregarPlanoDeVoo();
     jogador->minhaNave->escudoAtual = jogador->minhaNave->escudoMaximo;
     jogador->minhaNave->velocidadeAtual = 50.0f;
 
