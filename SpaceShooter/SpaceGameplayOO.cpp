@@ -42,6 +42,14 @@ bool temCinturao = false;
 float timerZonaSegura = 0.0f;
 bool estavaNoCinturao = false;
 
+// Globais do Diretor de Viagem
+bool inPirateZone = false;
+bool inBossZone = false;
+bool avisoMeteoro = false;
+bool avisoPirata = false;
+bool avisoBoss = false;
+int indexZonaPirataAtual = -1;
+
 Boss* chefeFinal = nullptr; 
 bool boss_defeated = false;
 
@@ -58,6 +66,14 @@ struct Drop {
 std::vector<Drop> drops;
 Player* jogador = nullptr;
 GerenciadorDeExplosoes* fxExplosoes = nullptr;
+
+struct EfeitoEscudo {
+    Vector2 pos;
+    float raioAtual = 0.0f;
+    float raioMaximo = 12.0f; 
+    bool crescendo = true;
+};
+std::vector<EfeitoEscudo> efeitosEscudo;
 
 
 //----------------------------------------------------------------------------------
@@ -138,12 +154,9 @@ int bum = 0, vmin = 1, vmax = 4, pisc = 0;
 int mort_x = 250, mort_y = 70;
 int pontos = 0, storo1 = 0, storo2 = 0, storo3 = 0, ng = 0;
 int nave_x = 390, nave_y = 600, tvel = 5;
-int exp_x, exp_y;
-int death_x, death_y, vida = 10;
+int vida = 10;
 int fire_x, fire_y;
 int foga = 0, fogd = 0, cdpause = 0;
-int sol_x, sol_y;
-int hitbox1x, hitbox1y, hitbox2x, hitbox2y;
 bool hit = false;
 int death_sound_delay = 0;
 
@@ -358,6 +371,610 @@ void CarregarPlanoDeVoo() {
     arquivo.close();
 }
 
+// --- LÓGICA FÍSICA DOS DROPS ---
+void AtualizarDrops() {
+    float naveCenterX = (float)nave_x + 24;
+    float naveCenterY = (float)nave_y + 40;
+    int lvlIma = jogador->minhaNave->levelIma;
+    
+    // Replica o fator de velocidade global para a queda correta
+    float world_speed_factor = jogador->minhaNave->velocidadeAtual / 100.0f;
+    if (distance_left <= 0) world_speed_factor = 0.0f;
+
+    for (int i = 0; i < (int)drops.size(); i++) {
+        if (!drops[i].sendoColetado) {
+            // Movimento e Inércia
+            drops[i].pos.x += drops[i].vel.x * mult;
+            drops[i].pos.y += drops[i].vel.y * mult;
+            drops[i].vel.x *= 0.96f;
+            drops[i].vel.y *= 0.96f;
+
+            // Queda no cenário
+            if (drops[i].isCombustivel) drops[i].pos.y += 2.0f * mult; 
+            else drops[i].pos.y += (3.0f * world_speed_factor) * mult;
+            
+            // Checagem da Dropbox (Ímã)
+            float dropboxW = 50.0f + (lvlIma * 20.0f); 
+            float dropboxH = 50.0f + (lvlIma * 20.0f);
+            if (fabs(drops[i].pos.x - naveCenterX) < dropboxW && 
+                fabs(drops[i].pos.y - naveCenterY) < dropboxH) {
+                drops[i].sendoColetado = true;
+            }
+        } 
+        else {
+            // Atração e Encolhimento
+            drops[i].pos.x += (naveCenterX - drops[i].pos.x) * (0.03f+(lvlIma/300.0f)) * mult;
+            drops[i].pos.y += (naveCenterY - drops[i].pos.y) * (0.03f+(lvlIma/300.0f)) * mult;
+            
+            float distX = fabs(drops[i].pos.x - naveCenterX);
+            float distY = fabs(drops[i].pos.y - naveCenterY);
+
+            if (distX < 25.0f && distY < 25.0f) {
+                drops[i].escalaVis -= 0.1f * mult;
+
+                // Finaliza a coleta
+                if (drops[i].escalaVis <= 0.05f) {
+                    if (drops[i].isCombustivel) {
+                        jogador->minhaNave->combustivelAtual += drops[i].valor;
+                        if (jogador->minhaNave->combustivelAtual > jogador->minhaNave->combustivelMaximo) {
+                            jogador->minhaNave->combustivelAtual = jogador->minhaNave->combustivelMaximo;
+                        }
+                    } else {
+                        jogador->minhaNave->GuardarMinerio(drops[i].tipo, drops[i].valor);
+                    }
+                    drops.erase(drops.begin() + i);
+                    i--;
+                    continue;
+                }
+            }
+        }
+
+        // Limpeza se saiu da tela (caiu no abismo)
+        if (!drops[i].sendoColetado && drops[i].pos.y > 850) {
+            drops.erase(drops.begin() + i);
+            i--;
+        }
+    }
+}
+
+// --- LÓGICA FÍSICA E COLISÃO DOS TIROS DO JOGADOR ---
+void AtualizarTiros() {
+    for (int i = 0; i < (int)tiros.size(); i++) {
+        // 1. CÁLCULO DE VELOCIDADE BASEADO NO UPGRADE
+        int lvlVel = jogador->minhaNave->levelVelocidadeTiro;
+        float velY = 10.0f + (lvlVel * 1.2f); // Fica mais rápido a cada nível
+
+        // 2. MOVIMENTO
+        tiros[i].y -= velY * mult;
+
+        // 3. REMOVE SE SAIU DA TELA (Otimização)
+        if (tiros[i].y < -50) {
+            tiros.erase(tiros.begin() + i);
+            i--; 
+            continue; 
+        }
+
+        // --- COLISÕES ---
+        bool tiroAcertou = false;
+
+        // A) Colisão com a LISTA DE METEOROS
+        for (int m = 0; m < (int)meteoros.size(); m++) {
+            if (!meteoros[m].ativo) continue;
+
+            if (tiros[i].y <= meteoros[m].pos.y + 40 &&       
+                tiros[i].y >= meteoros[m].pos.y - 20 && 
+                tiros[i].x >= meteoros[m].pos.x &&            
+                tiros[i].x <= meteoros[m].pos.x + 60) {       
+                
+                PlaySound(bomb);
+                fxExplosoes->AdicionarExplosao({meteoros[m].pos.x + 30, meteoros[m].pos.y + 20}, METEOR); 
+                
+                // Lógica de Sobrevivência (Game Design)
+                if (meteoros[m].isEmergencia) {
+                    for(int d=0; d<3; d++) { 
+                        Drop dropComb; 
+                        dropComb.pos = {meteoros[m].pos.x + 30, meteoros[m].pos.y + 20};
+                        float ang = GetRandomValue(180, 360) * DEG2RAD; 
+                        dropComb.vel = { cosf(ang) * (GetRandomValue(30, 60)/10.0f), sinf(ang) * (GetRandomValue(30, 60)/10.0f) };
+                        dropComb.isCombustivel = true; dropComb.valor = 15; 
+                        drops.push_back(dropComb);
+                    }
+                } 
+                else if (jogador->minhaNave->combustivelAtual <= 0.0f && GetRandomValue(0, 1) == 0) {
+                    Drop dropComb; 
+                    dropComb.pos = {meteoros[m].pos.x + 30, meteoros[m].pos.y + 20};
+                    float ang = GetRandomValue(180, 360) * DEG2RAD; 
+                    dropComb.vel = { cosf(ang) * 4.0f, sinf(ang) * 4.0f };
+                    dropComb.isCombustivel = true; dropComb.valor = 10; 
+                    drops.push_back(dropComb);
+                } 
+                else {
+                    SpawnLoot({meteoros[m].pos.x + 30, meteoros[m].pos.y + 20});
+                }
+                
+                meteoros[m].ativo = false; // Destrói o meteoro
+                tiroAcertou = true;
+                break; // O tiro já explodiu, para de checar os outros meteoros
+            }
+        }
+        
+        if (tiroAcertou) {
+            tiros.erase(tiros.begin() + i); 
+            i--; 
+            continue; 
+        }
+
+        // B) Colisão com BOSS
+        if (boss && vida > 0 && chefeFinal->vida > 0) { 
+            float larguraBoss = 2048.0f * chefeFinal->escalaBoss; 
+            float alturaBoss = 2048.0f * chefeFinal->escalaBoss;
+            
+            if (tiros[i].x >= chefeFinal->x && tiros[i].x <= chefeFinal->x + larguraBoss && 
+                tiros[i].y <= chefeFinal->y + alturaBoss - 50 && tiros[i].y >= chefeFinal->y) {
+                
+                chefeFinal->vida--;
+                chefeFinal->tempoDor = 0.5f; 
+                
+                if (chefeFinal->vida == 40 || chefeFinal->vida == 30 || chefeFinal->vida == 20 || chefeFinal->vida == 10) {
+                    chefeFinal->tempoRaiva = 3.0f;
+                    chefeFinal->cadenciaTiro -= 0.1f; 
+                    if (chefeFinal->cadenciaTiro < 0.1f) chefeFinal->cadenciaTiro = 0.1f;
+                }
+                
+                tiros.erase(tiros.begin() + i);
+                i--;
+                continue;
+            }
+        }
+        // C) Colisão com INIMIGO NORMAL
+        if (enemy && vida > 0) {
+            if (tiros[i].x >= enemyx && tiros[i].x <= enemyx + 60 && 
+                tiros[i].y <= enemyy + 40 && tiros[i].y >= enemyy) {
+                
+                enemylife--; 
+                tiros.erase(tiros.begin() + i);
+                i--;
+                continue;
+            }
+        }
+    }
+}
+
+// --- LÓGICA FÍSICA E SPAWN DOS METEOROS ---
+void AtualizarMeteoros() {
+    float world_speed_factor = jogador->minhaNave->velocidadeAtual / 100.0f;
+    if (distance_left <= 0) world_speed_factor = 0.0f;
+
+    // 1.5. Aviso de Zona Segura 
+    estavaNoCinturao = false;
+    timerZonaSegura = 0.0f;
+    bool semMeteoros = true;
+    for (auto& m : meteoros) if (m.ativo) semMeteoros = false;
+
+    if (temCinturao) estavaNoCinturao = true;
+    if (!temCinturao && estavaNoCinturao && semMeteoros) {
+        timerZonaSegura = 3.0f; 
+        estavaNoCinturao = false;
+    }
+
+    // 2. Lógica de Máximo de Meteoros
+    bool velocidadeBaixa = (jogador->minhaNave->velocidadeAtual <= 500.0f);
+    int limiteMeteoros = 0;
+    
+    if (!winn && !boss) {
+        if (temCinturao) limiteMeteoros = 10; 
+        else if (velocidadeBaixa) limiteMeteoros = 2; 
+    }
+
+    int meteorosAtivos = 0;
+    bool temEmergenciaNaTela = false;
+    for (auto& m : meteoros) {
+        if (m.ativo) {
+            meteorosAtivos++;
+            if (m.isEmergencia) temEmergenciaNaTela = true;
+        }
+    }
+
+    // --- SISTEMA ANTI-SOFTLOCK ---
+    if (jogador->minhaNave->velocidadeAtual <= 0.0f && jogador->minhaNave->combustivelAtual <= 0.0f && !temEmergenciaNaTela && !winn && !boss) {
+        if (GetRandomValue(0, 100) == 1) { 
+            Meteoro emg;
+            emg.ativo = true;
+            emg.isEmergencia = true;
+            emg.fall = 0; 
+            emg.rot = 0.0f;
+            emg.rotSpeed = (float)GetRandomValue(30, 150) * ((GetRandomValue(0, 1) == 0) ? 1.0f : -1.0f);
+
+            int origem = GetRandomValue(0, 2);
+            if (origem == 0) {
+                emg.pos = { (float)GetRandomValue(100, 1100), -100.0f };
+                emg.velIndependente = { (float)GetRandomValue(-30, 30) / 10.0f, (float)GetRandomValue(20, 50) / 10.0f };
+            } else if (origem == 1) {
+                emg.pos = { -100.0f, (float)GetRandomValue(50, 400) };
+                emg.velIndependente = { (float)GetRandomValue(20, 50) / 10.0f, (float)GetRandomValue(-10, 30) / 10.0f };
+            } else {
+                emg.pos = { 1300.0f, (float)GetRandomValue(50, 400) };
+                emg.velIndependente = { (float)GetRandomValue(-50, -20) / 10.0f, (float)GetRandomValue(-10, 30) / 10.0f };
+            }
+            meteoros.push_back(emg);
+            meteorosAtivos++;
+        }
+    }
+
+    // --- SPAWN NORMAL DE METEOROS ---
+    while (meteorosAtivos < limiteMeteoros) {
+        Meteoro novo;
+        novo.pos.x = (float)GetRandomValue(30, 1150);
+        novo.pos.y = (float)GetRandomValue(-800, -100); 
+        novo.fall = (float)GetRandomValue(4, 9);
+        novo.rot = 0.0f;
+        novo.rotSpeed = (float)GetRandomValue(30, 150) * ((GetRandomValue(0, 1) == 0) ? 1.0f : -1.0f);
+        novo.ativo = true;
+        novo.isEmergencia = false;
+        novo.velIndependente = {0.0f, 0.0f};
+        meteoros.push_back(novo);
+        meteorosAtivos++;
+    }
+
+    // 3. Física e Colisão
+    for (int m = 0; m < (int)meteoros.size(); m++) {
+        if (!meteoros[m].ativo) continue;
+
+        if (meteoros[m].isEmergencia) {
+            meteoros[m].pos.x += meteoros[m].velIndependente.x * mult;
+            meteoros[m].pos.y += meteoros[m].velIndependente.y * mult;
+        } else {
+            meteoros[m].pos.y += (meteoros[m].fall * world_speed_factor) * mult;
+        }
+        meteoros[m].rot += meteoros[m].rotSpeed * GetFrameTime();
+
+        if (jogador->minhaNave->escudoAtual > 0 && 
+            meteoros[m].pos.y >= nave_y - 10 && meteoros[m].pos.y <= nave_y + 80 && 
+            meteoros[m].pos.x >= nave_x - 30 && meteoros[m].pos.x <= nave_x + 65) {
+            
+            if (jogador->minhaNave->iFrame <= 0.0f) {
+                jogador->minhaNave->escudoAtual--;
+                jogador->minhaNave->iFrame = 2.0f;
+                PlaySound(bomb);
+            }
+
+            float centroEscudoX = nave_x + 50.0f;
+            float centroEscudoY = nave_y + 45.0f;
+            float centroMeteoroX = meteoros[m].pos.x + 30.0f;
+            float centroMeteoroY = meteoros[m].pos.y + 20.0f;
+
+            float dx = centroMeteoroX - centroEscudoX;
+            float dy = centroMeteoroY - centroEscudoY;
+            float distancia = sqrt(dx*dx + dy*dy);
+            Vector2 posExplosao = {centroMeteoroX, centroMeteoroY};
+
+            if (distancia > 0) {
+                posExplosao.x = centroEscudoX + (dx / distancia) * 75.0f;
+                posExplosao.y = centroEscudoY + (dy / distancia) * 75.0f;
+            }
+
+            fxExplosoes->AdicionarExplosao(posExplosao, METEOR); 
+            SpawnLoot({meteoros[m].pos.x + 30, meteoros[m].pos.y + 20});
+            meteoros[m].ativo = false; 
+        }
+
+        if (meteoros[m].pos.y > 800 || meteoros[m].pos.x < -250 || meteoros[m].pos.x > 1450 || meteoros[m].pos.y < -250) {
+            meteoros[m].ativo = false;
+        }
+    }
+    
+    for (int m = 0; m < (int)meteoros.size(); m++) {
+        if (!meteoros[m].ativo) {
+            meteoros.erase(meteoros.begin() + m);
+            m--;
+        }
+    }
+}
+
+// --- INTELIGÊNCIA ARTIFICIAL E FÍSICA DOS INIMIGOS ---
+void AtualizarInimigos() {
+    // 1. Lógica do Tiro do Inimigo Normal
+    if (tiroenemy_ativo) {
+        tiroenemy_y += 5.0f * mult;
+
+        if (tiroenemy_y > 750) tiroenemy_ativo = false;
+
+        // Colisão com o Escudo/Nave do Jogador
+        if (vida > 0 && tiroenemy_y >= nave_y && tiroenemy_y <= nave_y + 80 && 
+            tiroenemy_x >= nave_x + 20 && tiroenemy_x <= nave_x + 80) {
+            
+            if (death_sound_delay == 0) { PlaySound(bomb); death_sound_delay = 20; }
+            
+            if (jogador->minhaNave->iFrame <= 0.0f) {
+                jogador->minhaNave->escudoAtual--;
+                jogador->minhaNave->iFrame = 2.0f;
+                PlaySound(bomb);
+            }
+            tiroenemy_ativo = false; 
+            
+            // Adiciona o efeito visual de impacto no escudo
+            if (jogador->minhaNave->escudoAtual > 0) {
+                EfeitoEscudo ef;
+                ef.pos = { tiroenemy_x, tiroenemy_y }; 
+                efeitosEscudo.push_back(ef);
+            }
+        }
+    }
+
+    // 2. Comportamento do Inimigo Normal
+    if (enemy) {
+        if (enemylife <= 0) {
+            // Morte
+            PlaySound(bomb);
+            fxExplosoes->AdicionarExplosao({(float)enemyx + 30, (float)enemyy + 20}, SMALL_SHIP); 
+            
+            // Drop de Minérios
+            for(int j=0; j<5; j++) {
+                Drop d; 
+                d.pos = {(float)enemyx+30, (float)enemyy+20};
+                float ang = GetRandomValue(180, 360) * DEG2RAD; 
+                float spd = GetRandomValue(50, 90) / 10.0f; 
+                d.vel = { cosf(ang) * spd, sinf(ang) * spd };
+                d.tipo = (j == 0) ? OURO : FERRO; 
+                d.valor = (j == 0) ? 2 : 10; 
+                drops.push_back(d);
+            }
+            // Drop de Combustível
+            for(int j=0; j<3; j++) { 
+                Drop d; 
+                d.pos = {(float)enemyx+30, (float)enemyy+20};
+                float ang = GetRandomValue(180, 360) * DEG2RAD; 
+                float spd = GetRandomValue(30, 60) / 10.0f; 
+                d.vel = { cosf(ang) * spd, sinf(ang) * spd };
+                d.isCombustivel = true;
+                d.valor = 15; 
+                drops.push_back(d);
+            }
+            enemy = false;
+            enemy_defeated = true; 
+        } 
+        else {
+            // Movimentação e Perseguição
+            if(enemyy < 150) enemyy += (int)(2 * mult);
+            if(enemyy >= 150){
+                enemyy = 150;
+                if(enemyx < nave_x) enemyx += (int)(1.5f * mult); 
+                if(enemyx > nave_x) enemyx -= (int)(1.5f * mult);
+            }
+
+            // Atira no jogador
+            enemy_shoot_timer -= mult;
+            if (enemy_shoot_timer <= 0 && !tiroenemy_ativo) {
+                tiroenemy_ativo = true;
+                tiroenemy_x = enemyx + 30; 
+                tiroenemy_y = enemyy + 40;
+                enemy_shoot_timer = 150.0f; 
+            }
+        }
+    }
+}
+
+// --- GERENCIAMENTO DE ESTADO DE JOGO (VITÓRIA E DERROTA) ---
+void AtualizarEstadoDeJogo() {
+    // Sincroniza a morte
+    if (jogador->minhaNave->escudoAtual <= 0) vida = 0;
+
+    // Lógica do Som de Morte
+    if (death_sound_delay > 0) {
+        death_sound_delay--;
+        if (death_sound_delay == 0 && vida == 0) PlaySound(ai);
+    }
+
+    if (winn) {
+        pisc++;
+        if (pisc >= 200) pisc = 0;
+        
+        if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_M)) {
+            // SALVA O ARQUIVO AQUI NA CPU, FORA DA TELA!
+            std::ofstream arqRetorno("pos_viagem.txt");
+            if (arqRetorno.is_open()) {
+                arqRetorno << jogador->minhaNave->combustivelAtual << " "
+                           << jogador->minhaNave->escudoAtual << " "
+                           << jogador->minhaNave->invFerro << " "
+                           << jogador->minhaNave->invPrata << " "
+                           << jogador->minhaNave->invOuro << " "
+                           << jogador->dinheiro << " "
+                           << jogador->minhaNave->velocidadeAtual << " "
+                           << jogador->minhaNave->timerCondensador << "\n";
+                arqRetorno.close();
+            }
+
+            if (IsKeyPressed(KEY_M)) {
+                system("cd ../EstelarMap && start MapaEstelar.exe"); 
+            }
+            quit = true; 
+        }
+    }
+
+    if (vida < 1) {
+        bum++;
+        pisc++;
+        
+        if (bum == 1) { // Só no primeiro frame da morte
+            fxExplosoes->AdicionarExplosao({(float)nave_x + 40, (float)nave_y + 40}, LARGE_SHIP);
+        }
+        
+        if (pisc >= 200) pisc = 0;
+        
+        if (IsKeyPressed(KEY_R)) {
+            winn = false;
+            vida = 10;
+            jogador->minhaNave->escudoAtual = 1;
+            bum = 0;
+            boss_defeated = false;
+            jogador->minhaNave->combustivelAtual = jogador->minhaNave->combustivelMaximo;
+            if (boss) chefeFinal->Resetar(); 
+        }
+    }
+}
+
+// --- DIRETOR DE VIAGEM E FÍSICA DO CENÁRIO ---
+void AtualizarViagem() {
+    
+    if (jogador->minhaNave->iFrame > 0.0f) {
+        jogador->minhaNave->iFrame -= GetFrameTime();
+    }
+    
+    bool turbo_on = IsKeyDown(KEY_K);
+    bool freio_on = IsKeyDown(KEY_L);
+
+    // 1. Atualiza Física Base
+    if (distance_left > 0 && vida > 0 && !winn) {
+        jogador->minhaNave->AtualizarVoo(GetFrameTime() * mult, turbo_on, freio_on);
+        if (jogador->minhaNave->condensadorLevel > 0) {
+            jogador->minhaNave->AtualizarCondensador(GetFrameTime());
+        }
+    }
+
+    float world_speed_factor = jogador->minhaNave->velocidadeAtual / 100.0f;
+    if (distance_left <= 0) world_speed_factor = 0.0f;
+
+    // 2. Bloqueio do Boss e Drops
+    static float timerLiberarNave = 0.0f;
+    static bool dropouGasol = false;
+    static bool dropouDin = false;
+    bool bloqueioBoss = false;
+
+    if (boss) {
+        if (chefeFinal->vida > 0) {
+            bloqueioBoss = true; timerLiberarNave = 0.0f;
+            dropouGasol = false; dropouDin = false;
+        } else {
+            if (!dropouGasol) {
+                for(int j=0; j<5; j++) { 
+                    Drop d; d.pos = {(float)enemyx+30, (float)enemyy+20};
+                    float ang = GetRandomValue(180, 360) * DEG2RAD; float spd = GetRandomValue(30, 60) / 10.0f; 
+                    d.vel = { cosf(ang) * spd, sinf(ang) * spd }; d.isCombustivel = true; d.valor = 15; drops.push_back(d);
+                }
+                dropouGasol = true;
+            }
+            if (!dropouDin) { jogador->dinheiro += GetRandomValue(10,60); dropouDin = true; }
+            
+            timerLiberarNave += GetFrameTime();
+            if (timerLiberarNave < 3.0f) bloqueioBoss = true;
+            else { bloqueioBoss = false; boss = false; boss_defeated = true; }
+        }
+    } else {
+        timerLiberarNave = 0.0f; dropouGasol = false;
+    }
+
+    // 3. Progresso da Viagem Real
+    if (distance_left > 0 && vida > 0) {
+        float dtSeguro = GetFrameTime(); if (dtSeguro > 0.1f) dtSeguro = 0.1f; 
+        float avanco_exato = (jogador->minhaNave->velocidadeAtual * dtSeguro) * mult; 
+        distance_traveled += avanco_exato;
+        distance_left -= avanco_exato;
+        
+        if (distance_left < 0.0f) { distance_left = 0.0f; distance_traveled = distance_total; }
+        if (distance_left < 0.1f && !boss && !enemy) winn = true;
+    }
+
+    // Desaceleração forçada
+    if (bloqueioBoss && jogador->minhaNave->velocidadeAtual > 50.0f) {
+        jogador->minhaNave->velocidadeAtual -= 1.0f; 
+        if (jogador->minhaNave->velocidadeAtual < 50.0f) jogador->minhaNave->velocidadeAtual = 50.0f;
+    }
+
+    // 4. Scanner de Eventos e Radar
+    temCinturao = false; inPirateZone = false; inBossZone = false;
+    avisoMeteoro = false; avisoPirata = false; avisoBoss = false;
+    indexZonaPirataAtual = -1;
+
+    float distAviso = jogador->minhaNave->velocidadeAtual * 3.0f;
+    if (distAviso < 3000.0f) distAviso = 3000.0f; 
+
+    for (const auto& m : planoMeteoros) {
+        if (distance_traveled >= m.inicioAL - distAviso && distance_traveled < m.inicioAL) avisoMeteoro = true;
+        if (distance_traveled >= m.inicioAL && distance_traveled <= m.fimAL) temCinturao = true; 
+    }
+
+    for (int i = 0; i < (int)planoPiratas.size(); i++) {
+        auto& p = planoPiratas[i];
+        if (distance_traveled > p.fimAL && !p.processado) p.processado = true;
+        if (!p.processado) {
+            if (distance_traveled >= p.inicioAL - distAviso && distance_traveled < p.inicioAL) avisoPirata = true;
+            if (distance_traveled >= p.inicioAL && distance_traveled <= p.fimAL) { 
+                inPirateZone = true; indexZonaPirataAtual = i; 
+            }
+        }
+    }
+
+    for (int i = 0; i < (int)planoBosses.size(); i++) {
+        auto& b = planoBosses[i];
+        bool fisicamenteNaZona = (distance_traveled >= b.inicioAL && distance_traveled <= b.fimAL);
+
+        if (fisicamenteNaZona) {
+            inBossZone = true; 
+            if (!b.processado && !boss) {
+                if (!b.calculouTempo) {
+                    b.framesParaAtacar = GetRandomValue(300, 900);
+                    b.framesNoEscuro = 0; b.calculouTempo = true;
+                }
+                b.framesNoEscuro++; 
+                if (b.framesNoEscuro >= b.framesParaAtacar) {
+                    boss = true; boss_defeated = false; b.processado = true; chefeFinal->Resetar();
+                }
+            }
+        } 
+        else if (distance_traveled > b.fimAL && !b.processado) b.processado = true; 
+        
+        if (distance_traveled >= b.inicioAL - distAviso && distance_traveled < b.inicioAL && !b.processado) avisoBoss = true;
+    }
+
+    // 5. Física do Cenário Estelar
+    for (auto& s : background_stars) {
+        float move_amount = (world_speed_factor / (float)s.speed_delay) * mult;
+        s.position.y += move_amount;
+        if(s.position.y > 710) { 
+            s.position = {(float)GetRandomValue(0, 1200), (float)GetRandomValue(-100, -10)};
+            s.speed_delay = GetRandomValue(8, 20); s.base_size = GetRandomValue(1, 2); s.growth_range = 3;
+        }
+        float wave = sin(GetTime() * 3.0f + s.position.x * 0.05f); 
+        s.size = s.base_size + (int)(((wave + 1.0f) / 2.0f) * s.growth_range);
+    }
+
+    for (auto& s : foreground_stars) {
+        float move_amount = (world_speed_factor / (float)s.speed_delay) * mult;
+        s.position.y += move_amount;
+        if(s.position.y > 710) { 
+            if (!inBossZone) { 
+                s.position = {(float)GetRandomValue(0, 1200), (float)GetRandomValue(-150, -10)};
+                s.speed_delay = GetRandomValue(1, 7); 
+                s.base_size = (12 - s.speed_delay) / 2; if(s.base_size < 3) s.base_size = 3;
+                s.growth_range = (s.base_size > 4) ? 9 : 6;
+            }
+        }
+        float wave = sin(GetTime() * 5.0f + s.position.x * 0.01f);
+        s.size = s.base_size + (int)(((wave + 1.0f) / 2.0f) * s.growth_range);
+    }
+
+    for(auto& n : nebulas){
+        if (n.speed_delay <= 0) n.speed_delay = 20;
+        float move_amount = (world_speed_factor / (float)n.speed_delay) * mult;
+        n.position.y += move_amount;
+        if(n.position.y > 1000) { 
+            if (!inBossZone) { 
+                n.position = {(float)GetRandomValue(0, 1200), (float)GetRandomValue(-500, -300)};
+                Color COLOR_ROXO = {128, 0, 128, 255};
+                std::vector<Color> nebula_colors = {BLUE, COLOR_ROXO, RED, GREEN, YELLOW, WHITE};
+                n.base_color = nebula_colors[GetRandomValue(0, nebula_colors.size() - 1)];
+                GenerateNebulaShape(n, PARTICLES_PER_NEBULA, STAR_PARTICLE_COUNT);
+            }
+        }
+        for (int i=0; i < STAR_PARTICLE_COUNT; ++i){
+            if (i >= n.particles.size()) break;
+            auto& p = n.particles[i];
+            float wave = sin(GetTime() * 6.0f + (i * 0.5f));
+            p.star_size = 2 + (int)(((wave + 1.0f) / 2.0f) * 3);
+        }
+    }
+}
+
 void controle() {
     if (menu) {
         cdpause++;
@@ -441,17 +1058,8 @@ void controle() {
         if (nave_y > 600) nave_y = 600;
         if (nave_y < 20) nave_y = 20;
 
-        exp_x = nave_x;
-        hitbox1x = nave_x + 10; hitbox2x = nave_x + 38;
-        exp_x = nave_x;
-        exp_y = nave_y;
-        hitbox1y = nave_y + 40; hitbox2y = nave_y + 10;
-        exp_y = nave_y;
-        hitbox1y = nave_y + 40; hitbox2y = nave_y + 10;
         fire_x = nave_x + 49;
         fire_y = nave_y + 84;
-        death_x = nave_x - 30;
-        death_y = nave_y + 15;
 
     }
     if (IsKeyPressed(KEY_P) && !menu && cdpause > 100) {
@@ -484,278 +1092,9 @@ void desenhar() {
         if (creds) {
             DrawTexture(credits, 0, 0, WHITE);
         }
-    } 
+    }
     else {
         ClearBackground(BLACK);
-
-        // --- CONTROLE MESTRE DE VELOCIDADE E FÍSICA ---
-    bool turbo_on = IsKeyDown(KEY_K);
-    bool freio_on = IsKeyDown(KEY_L);
-
-    // 1. Atualiza a Física da Nave no Espaço (Se estiver viva e não tiver chegado)
-    if (distance_left > 0 && vida > 0 && !winn) {
-        jogador->minhaNave->AtualizarVoo(GetFrameTime() * mult, turbo_on, freio_on);
-
-        // --- LÓGICA DO CONDENSADOR NO SPACE SHOOTER ---
-        if (jogador->minhaNave->condensadorLevel > 0) {
-            jogador->minhaNave->AtualizarCondensador(GetFrameTime());
-        }
-    }
-
-    // 2. Feedback Visual (Fator de Velocidade do Mundo)
-    // Se a velocidade for 100, o fator é 1.0 (Normal). Se for 500, o fator é 5.0 (Rápido).
-    float world_speed_factor = jogador->minhaNave->velocidadeAtual / 100.0f;
-    
-    if (distance_left <= 0) {
-        world_speed_factor = 0.0f; // NAVE CHEGOU: PARA TUDO
-    }
-
-    // 3. Progresso da Viagem Real
-    // A trava: Se o boss está ativo e não foi derrotado, a distância congela!
-    // =================================================================
-    // --- LÓGICA DE BLOQUEIO DO BOSS E RECOMPENSAS ---
-    // =================================================================
-    static float timerLiberarNave = 0.0f;
-    static bool dropouGasol = false;
-    static bool dropouDin = false;
-    bool bloqueioBoss = false;
-
-    if (boss) {
-        if (chefeFinal->vida > 0) {
-            bloqueioBoss = true;
-            timerLiberarNave = 0.0f;
-            dropouGasol = false;
-            dropouDin = false;
-        } 
-        else {
-            // O Boss explodiu (HP <= 0), mas as peças ainda estão caindo...
-            
-            // 1. Drop de Combustível (Roda uma única vez)
-            if (!dropouGasol) {
-                for(int j=0; j<5; j++) { // Solta 5 orbs de gasol
-                    Drop d; 
-                    d.pos = {(float)enemyx+30, (float)enemyy+20};
-                    float ang = GetRandomValue(180, 360) * DEG2RAD; 
-                    float spd = GetRandomValue(30, 60) / 10.0f; 
-                    d.vel = { cosf(ang) * spd, sinf(ang) * spd };
-                    d.isCombustivel = true;
-                    d.valor = 15;
-                    drops.push_back(d);
-                }
-                dropouGasol = true;
-            }
-
-            // 2. Drop de dinheiro na conta do jogador (Roda uma única vez)
-            if (!dropouDin) {
-                jogador->dinheiro += GetRandomValue(10,60);
-                dropouDin = true;
-            }
-
-            // 3. Timer de Liberação da Nave
-            timerLiberarNave += GetFrameTime();
-            
-            if (timerLiberarNave < 3.0f) {
-                bloqueioBoss = true; // Segura a nave por mais 3 segundos de suspense
-            } else {
-                bloqueioBoss = false; 
-                boss = false;
-                boss_defeated = true;
-            }
-        }
-    } else {
-        timerLiberarNave = 0.0f;
-        dropouGasol = false;
-    }
-
-    if (distance_left > 0 && vida > 0) {
-        
-        // 1. Pega o tempo do frame, mas limita a no máximo 0.1 segundos
-        float dtSeguro = GetFrameTime();
-        if (dtSeguro > 0.1f) dtSeguro = 0.1f; 
-
-        // 2. Usa o dtSeguro ao invés do GetFrameTime()
-        float avanco_exato = (jogador->minhaNave->velocidadeAtual * dtSeguro) * mult; 
-        
-        distance_traveled += avanco_exato;
-        distance_left -= avanco_exato;
-            
-        if (distance_left < 0.0f) {
-            distance_left = 0.0f;
-            distance_traveled = distance_total;
-        }
-        // GATILHO UNIVERSAL DE CHEGADA:
-        if (distance_left<0.1 && !boss && !enemy) {
-            winn = true;
-        }
-    }
-
-    // 2. DESACELERAÇÃO FORÇADA PELO BOSS:
-    if (bloqueioBoss) {
-        if (jogador->minhaNave->velocidadeAtual > 50.0f) {
-            // Cai 1km/s por frame, dando aquela sensação de estar sendo freado brutalmente
-            jogador->minhaNave->velocidadeAtual -= 1.0f; 
-            
-            if (jogador->minhaNave->velocidadeAtual < 50.0f) {
-                jogador->minhaNave->velocidadeAtual = 50.0f; // Trava o piso em 50km/s
-            }
-        }
-    }
-
-    // =================================================================
-    // --- DIRETOR DE EVENTOS ---
-    // =================================================================
-    temCinturao = false;
-    
-    bool inPirateZone = false;
-    bool inBossZone = false;
-    bool avisoMeteoro = false, avisoPirata = false, avisoBoss = false;
-
-    float distAviso = jogador->minhaNave->velocidadeAtual * 3.0f;
-    if (distAviso < 3000.0f) distAviso = 3000.0f; // Distância mínima de aviso
-
-    // Scanner de Meteoros e Piratas
-    for (const auto& m : planoMeteoros) {
-        if (distance_traveled >= m.inicioAL - distAviso && distance_traveled < m.inicioAL) avisoMeteoro = true;
-        if (distance_traveled >= m.inicioAL && distance_traveled <= m.fimAL) { temCinturao = true; }
-    }
-
-    int indexZonaPirataAtual = -1; // Variável para rastrear qual zona estamos
-    for (int i = 0; i < (int)planoPiratas.size(); i++) {
-        auto& p = planoPiratas[i];
-        
-        // Passou direto ou já resolveu? Queima a zona.
-        if (distance_traveled > p.fimAL && !p.processado) p.processado = true;
-        
-        if (!p.processado) {
-            if (distance_traveled >= p.inicioAL - distAviso && distance_traveled < p.inicioAL) avisoPirata = true;
-            if (distance_traveled >= p.inicioAL && distance_traveled <= p.fimAL) { 
-                inPirateZone = true; 
-                indexZonaPirataAtual = i; // Salva o ID da zona em que o player está
-            }
-        }
-    }
-
-    // =================================================================
-    // 3. Scanner de Bosses - Lógica de Coordenadas Fixas
-    // =================================================================
-    for (int i = 0; i < (int)planoBosses.size(); i++) {
-        auto& b = planoBosses[i];
-        
-        bool fisicamenteNaZona = (distance_traveled >= b.inicioAL && distance_traveled <= b.fimAL);
-
-        if (fisicamenteNaZona) {
-            // REGRA VISUAL: Enquanto estiver no abismo, as estrelas somem.
-            inBossZone = true; 
-
-            // REGRA LÓGICA: Só tenta spawnar se a zona ainda for inédita
-            if (!b.processado && !boss) {
-                if (!b.calculouTempo) {
-                    b.framesParaAtacar = GetRandomValue(300, 900);
-                    b.framesNoEscuro = 0;
-                    b.calculouTempo = true;
-                }
-
-                b.framesNoEscuro++; 
-                
-                if (b.framesNoEscuro >= b.framesParaAtacar) {
-                    boss = true;
-                    boss_defeated = false;
-                    b.processado = true; 
-                    chefeFinal->Resetar();
-                }
-            }
-        } 
-        else if (distance_traveled > b.fimAL && !b.processado) {
-            b.processado = true; 
-        }
-        
-        // Alerta do Radar (só aparece se o boss ainda não foi ativado/passado)
-        if (distance_traveled >= b.inicioAL - distAviso && distance_traveled < b.inicioAL && !b.processado) {
-            avisoBoss = true;
-        }
-    }
-
-    // 1. BACKGROUND STARS (Animação Senoidal - Blindada contra bugs)
-    for (auto& s : background_stars) {
-        float move_amount = (world_speed_factor / (float)s.speed_delay) * mult;
-        s.position.y += move_amount;
-
-        // Reset quando sai da tela
-        if(s.position.y > 710) { 
-            s.position = {(float)GetRandomValue(0, 1200), (float)GetRandomValue(-100, -10)};
-            s.speed_delay = GetRandomValue(8, 20); 
-            s.base_size = GetRandomValue(1, 2); 
-            s.growth_range = 3;
-        }
-
-        // --- NOVA ANIMAÇÃO MATEMÁTICA ---
-        // Pega o tempo atual * velocidade (3.0f) + posição X (para desincronizar uma da outra)
-        // O resultado sempre vai variar suavemente entre -1 e 1
-        float wave = sin(GetTime() * 3.0f + s.position.x * 0.05f); 
-        
-        // Transforma o -1..1 em 0..1
-        float factor = (wave + 1.0f) / 2.0f;
-        
-        // Define o tamanho ABSOLUTO. É impossível passar do limite.
-        s.size = s.base_size + (int)(factor * s.growth_range);
-    }
-
-    // 2. FOREGROUND STARS (Animação Senoidal)
-    for (auto& s : foreground_stars) {
-        float move_amount = (world_speed_factor / (float)s.speed_delay) * mult;
-        s.position.y += move_amount;
-
-        if(s.position.y > 710) { 
-            if (!inBossZone) { // <--- TRAVA DO ABISMO AQUI
-                s.position = {(float)GetRandomValue(0, 1200), (float)GetRandomValue(-150, -10)};
-                s.speed_delay = GetRandomValue(1, 7); 
-                
-                s.base_size = (12 - s.speed_delay) / 2;
-                if(s.base_size < 3) s.base_size = 3;
-                
-                s.growth_range = (s.base_size > 4) ? 9 : 6;
-            }
-        }
-
-        // --- NOVA ANIMAÇÃO MATEMÁTICA ---
-        // Velocidade 5.0f (mais rápido que o fundo)
-        float wave = sin(GetTime() * 5.0f + s.position.x * 0.01f);
-        float factor = (wave + 1.0f) / 2.0f;
-        
-        // Cálculo absoluto
-        s.size = s.base_size + (int)(factor * s.growth_range);
-    }
-
-    // 3. NEBULAS
-    for(auto& n : nebulas){
-        if (n.speed_delay <= 0) n.speed_delay = 20;
-        float move_amount = (world_speed_factor / (float)n.speed_delay) * mult;
-        n.position.y += move_amount;
-
-        if(n.position.y > 1000) { 
-            if (!inBossZone) { // <--- TRAVA DO ABISMO AQUI
-                n.position = {(float)GetRandomValue(0, 1200), (float)GetRandomValue(-500, -300)};
-                Color COLOR_ROXO = {128, 0, 128, 255};
-                std::vector<Color> nebula_colors = {BLUE, COLOR_ROXO, RED, GREEN, YELLOW, WHITE};
-                n.base_color = nebula_colors[GetRandomValue(0, nebula_colors.size() - 1)];
-                GenerateNebulaShape(n, PARTICLES_PER_NEBULA, STAR_PARTICLE_COUNT);
-            }
-        }
-        
-        // Animação das partículas internas (SENOIDAL)
-        for (int i=0; i < STAR_PARTICLE_COUNT; ++i){
-            if (i >= n.particles.size()) break;
-            auto& p = n.particles[i];
-            
-            // Usa o índice 'i' para que cada estrela da mesma nebulosa pisque diferente
-            float wave = sin(GetTime() * 6.0f + (i * 0.5f));
-            float factor = (wave + 1.0f) / 2.0f;
-            
-            // Tamanho fixo entre 1 e 3 (ou 1 e 4)
-            p.star_size = 2 + (int)(factor * 3);
-        }
-    }
-
     // DESENHO das camadas do fundo
     DrawTexture(static_dust_texture.texture, 0, 0, WHITE);
     
@@ -827,9 +1166,6 @@ void desenhar() {
         DrawText(TextFormat("ESCUDO: %d N", jogador->minhaNave->escudoAtual), 20, 180, 20, SKYBLUE);
         DrawText(TextFormat("CONDENSADOR: %d s", (int)jogador->minhaNave->timerCondensador), 20, 200, 20, SKYBLUE);
         DrawText(TextFormat("DINHEIRO: $%.2f", jogador->dinheiro), 20, 220, 20, GREEN);
-        
-        // Sincroniza a morte: Se o escudo zerar, a 'vida' zera para disparar a tela de Game Over
-        if (jogador->minhaNave->escudoAtual <= 0) vida = 0;
 
         char distance_str[20];
         sprintf(distance_str, "%.0f       ", distance_left);
@@ -855,8 +1191,9 @@ void desenhar() {
             // Freio: 0.2f (Foguinho bem pequeno)
             // Normal: 1.0f ou 0.4f
             float targetScale;
+            //float lvlEngine = jogador->minhaNave->forcaTurbo;
             if (turbo) targetScale = 2.5f;
-            else if (freio) targetScale = 0.2f; // <--- NOVO ESTADO
+            else if (freio) targetScale = 0.2f;
             else targetScale = (movendo ? 1.0f : 0.4f);
 
             // Variável estática para guardar o tamanho entre os frames (para a animação ser suave)
@@ -912,132 +1249,26 @@ void desenhar() {
 
             EndBlendMode();
 
-            // --- GERENCIAMENTO DOS PROJÉTEIS (Loop Geral) ---
-    
-            // Configura o visual de energia (BlendMode) UMA VEZ para todos os tiros
+            // --- DESENHO DOS PROJÉTEIS ---
             BeginBlendMode(BLEND_ADDITIVE);
             
             for (int i = 0; i < (int)tiros.size(); i++) {
-                // 1. CÁLCULO DE VELOCIDADE E ESTICAMENTO BASEADO NO UPGRADE
+                // 1. CÁLCULO DE ESTICAMENTO VISUAL BASEADO NO UPGRADE
                 int lvlVel = jogador->minhaNave->levelVelocidadeTiro;
-                float velY = 10.0f + (lvlVel * 1.2f);           // Fica mais rápido a cada nível
-                float fatorEsticamento = 1.0f + (lvlVel); // Estica o sprite horizontalmente/verticalmente
+                float fatorEsticamento = 1.0f + (lvlVel); 
 
                 float alturaLaser = 45.0f * fatorEsticamento;
                 float raioYEllipse = 15.0f * fatorEsticamento;
 
-                // 2. DESENHO ATUALIZADO (EFEITO LASER COMPRIDO)
-                BeginBlendMode(BLEND_ADDITIVE);
+                // 2. DESENHO DO LASER E NÚCLEO
                 DrawTexturePro(texParticula, 
                     {0, 0, 64, 64}, 
                     {tiros[i].x, tiros[i].y, 12.0f, alturaLaser}, 
                     {6.0f, alturaLaser / 2.0f}, 
                     0.0f, 
                     ColorAlpha(RED, 0.6f));
-                EndBlendMode();
                 
                 DrawEllipse(tiros[i].x, tiros[i].y, 2.0f, raioYEllipse, WHITE);
-
-                // 3. MOVIMENTO COM A NOVA VELOCIDADE
-                tiros[i].y -= velY * mult;
-
-                // 3. REMOVE SE SAIU DA TELA (Otimização)
-                if (tiros[i].y < -50) {
-                    tiros.erase(tiros.begin() + i);
-                    i--; // Ajusta o índice porque removemos um item
-                    continue; // Pula pro próximo
-                }
-
-                // --- COLISÕES ---
-
-                // A) Colisão com a LISTA DE METEOROS
-                bool tiroAcertou = false;
-                for (int m = 0; m < (int)meteoros.size(); m++) {
-                    if (!meteoros[m].ativo) continue;
-
-                    if (tiros[i].y <= meteoros[m].pos.y + 40 &&       
-                        tiros[i].y >= meteoros[m].pos.y - 20 && 
-                        tiros[i].x >= meteoros[m].pos.x &&            
-                        tiros[i].x <= meteoros[m].pos.x + 60) {       
-                        
-                        PlaySound(bomb);
-                        fxExplosoes->AdicionarExplosao({meteoros[m].pos.x + 30, meteoros[m].pos.y + 20}, METEOR); 
-                        
-                        // Lógica de Sobrevivência (Game Design)
-                        if (meteoros[m].isEmergencia) {
-                            // O de emergência SEMPRE dropa 3 combustíveis
-                            for(int d=0; d<3; d++) { 
-                                Drop dropComb; 
-                                dropComb.pos = {meteoros[m].pos.x + 30, meteoros[m].pos.y + 20};
-                                float ang = GetRandomValue(180, 360) * DEG2RAD; 
-                                dropComb.vel = { cosf(ang) * (GetRandomValue(30, 60)/10.0f), sinf(ang) * (GetRandomValue(30, 60)/10.0f) };
-                                dropComb.isCombustivel = true; dropComb.valor = 15; 
-                                drops.push_back(dropComb);
-                            }
-                        } 
-                        else if (jogador->minhaNave->combustivelAtual <= 0.0f && GetRandomValue(0, 1) == 0) {
-                            // Se tá sem gasolina e destruiu um meteoro normal: 50% de chance de dropar 1 combustível
-                            Drop dropComb; 
-                            dropComb.pos = {meteoros[m].pos.x + 30, meteoros[m].pos.y + 20};
-                            float ang = GetRandomValue(180, 360) * DEG2RAD; 
-                            dropComb.vel = { cosf(ang) * 4.0f, sinf(ang) * 4.0f };
-                            dropComb.isCombustivel = true; dropComb.valor = 10; 
-                            drops.push_back(dropComb);
-                        } 
-                        else {
-                            // Drop normal de minérios
-                            SpawnLoot({meteoros[m].pos.x + 30, meteoros[m].pos.y + 20});
-                        }
-                        
-                        meteoros[m].ativo = false; // Destrói o meteoro
-                        tiroAcertou = true;
-                        break; // O tiro já explodiu, para de checar os outros meteoros
-                    }
-                }
-                
-                if (tiroAcertou) {
-                    tiros.erase(tiros.begin() + i); // Remove o tiro
-                    i--; 
-                    continue; // Pula pro próximo tiro
-                }
-
-                // B) Colisão com BOSS
-                if (boss && vida > 0 && chefeFinal->vida > 0) { 
-                    float larguraBoss = 2048.0f * chefeFinal->escalaBoss; 
-                    float alturaBoss = 2048.0f * chefeFinal->escalaBoss;
-                    
-                    if (tiros[i].x >= chefeFinal->x && tiros[i].x <= chefeFinal->x + larguraBoss && 
-                        tiros[i].y <= chefeFinal->y + alturaBoss - 50 && tiros[i].y >= chefeFinal->y) {
-                        
-                        chefeFinal->vida--;
-                        chefeFinal->tempoDor = 0.5f; 
-                        
-                        // Fica com raiva
-                        if (chefeFinal->vida == 40 || chefeFinal->vida == 30 || chefeFinal->vida == 20 || chefeFinal->vida == 10) {
-                            chefeFinal->tempoRaiva = 3.0f;
-                            chefeFinal->cadenciaTiro -= 0.1f; 
-                            if (chefeFinal->cadenciaTiro < 0.1f) chefeFinal->cadenciaTiro = 0.1f;
-                        }
-                        
-                        tiros.erase(tiros.begin() + i);
-                        i--;
-                        continue;
-                    }
-                }
-                // C) Colisão com INIMIGO NORMAL
-                if (enemy && vida > 0) {
-                    // Hitbox do inimigo normal (Ajustada pra largura 60x40)
-                    if (tiros[i].x >= enemyx && tiros[i].x <= enemyx + 60 && 
-                        tiros[i].y <= enemyy + 40 && tiros[i].y >= enemyy) {
-                        
-                        enemylife--; // Só tira 1 de vida
-                        
-                        // Remove o tiro do player
-                        tiros.erase(tiros.begin() + i);
-                        i--;
-                        continue;
-                    }
-                }
             }
             EndBlendMode(); // Fecha o modo de luz
             
@@ -1072,11 +1303,6 @@ void desenhar() {
             
             // Define a direção do espelhamento (1 = Normal, -1 = Espelhado)
             float direcao_textura = (estado_inclinacao < 0.0f) ? -1.0f : 1.0f;
-
-            // O relógio do iFrame agora roda independente da nave estar viajando ou parada no Boss
-            if (jogador->minhaNave->iFrame > 0.0f) {
-                jogador->minhaNave->iFrame -= GetFrameTime();
-            }
             
             // Recorte do SpriteSheet
             Rectangle sourceRec = { (float)(frame_atual * 100), 0.0f, 100.0f * direcao_textura, 100.0f };
@@ -1125,6 +1351,32 @@ void desenhar() {
                 EndBlendMode(); // Encerra o modo luz    
             }
 
+            // --- ANIMAÇÃO DOS IMPACTOS NO ESCUDO ---
+            BeginBlendMode(BLEND_ADDITIVE);
+            for (int i = 0; i < (int)efeitosEscudo.size(); i++) {
+                // Desenha a elipse (Larga e achatada para parecer dispersão de energia)
+                DrawEllipse(efeitosEscudo[i].pos.x, efeitosEscudo[i].pos.y, efeitosEscudo[i].raioAtual * 1.5f, efeitosEscudo[i].raioAtual, RED);
+                DrawEllipse(efeitosEscudo[i].pos.x, efeitosEscudo[i].pos.y, efeitosEscudo[i].raioAtual * 0.8f, efeitosEscudo[i].raioAtual * 0.5f, WHITE);
+
+                // Lógica de Pulsar
+                if (efeitosEscudo[i].crescendo) {
+                    efeitosEscudo[i].raioAtual += 4.0f * mult; // Cresce super rápido
+                    if (efeitosEscudo[i].raioAtual >= efeitosEscudo[i].raioMaximo) {
+                        efeitosEscudo[i].crescendo = false;
+                    }
+                } else {
+                    efeitosEscudo[i].raioAtual -= 3.0f * mult; // Some rápido
+                }
+
+                // Remove da memória quando o pulso termina
+                if (!efeitosEscudo[i].crescendo && efeitosEscudo[i].raioAtual <= 0) {
+                    efeitosEscudo.erase(efeitosEscudo.begin() + i);
+                    i--;
+                }
+            }
+            EndBlendMode();
+            
+
             // --- REFLEXO DE LUZ NA NAVE (BACKLIGHT) ---
             // Recalculamos se está com turbo para sincronizar a luz
             bool turbo_glow = IsKeyDown(KEY_K);
@@ -1170,121 +1422,46 @@ void desenhar() {
         }
 
 
-        // --- GERENCIAMENTO DE DROPS (Física de Chafariz + Coleta Fácil) ---
-    
-    // ATIVA O BRILHO PARA TODOS OS DROPS
-    BeginBlendMode(BLEND_ADDITIVE); 
+        // --- DESENHO DOS DROPS ---
+        BeginBlendMode(BLEND_ADDITIVE); 
 
-    for (int i = 0; i < (int)drops.size(); i++) {
-        
-        // Alvo da sucção (Centro da nave)
-        float naveCenterX = (float)nave_x + 24;
-        float naveCenterY = (float)nave_y + 40;
+        for (int i = 0; i < (int)drops.size(); i++) {
+            Color corGlow, corMeio, corCentro;
+            float tamanhoGlow, tamanhoMeio, tamanhoCentro;
+            float pulsoLoot = sin(GetTime() * 10.0f + i) * 29.0f; 
 
-        // --- CÁLCULO DA DROPBOX DINÂMICA (ÍMÃ COLETOR) ---
-            int lvlIma = jogador->minhaNave->levelIma;
-
-        // --- 1. LÓGICA DE FÍSICA E COLETA ---
-        if (!drops[i].sendoColetado) {
-            // FÍSICA NORMAL
-            drops[i].pos.x += drops[i].vel.x * mult;
-            drops[i].pos.y += drops[i].vel.y * mult;
-
-            drops[i].vel.x *= 0.96f;
-            drops[i].vel.y *= 0.96f;
-
-            if (drops[i].isCombustivel) drops[i].pos.y += 2.0f * mult; 
-            else drops[i].pos.y += (3.0f * world_speed_factor) * mult;
-            
-            // Tamanho base aumenta a cada nível upado (+20px largura / +20px altura por nível)
-            float dropboxW = 50.0f + (lvlIma * 20.0f); 
-            float dropboxH = 50.0f + (lvlIma * 20.0f);
-
-            // GATILHO DA SUCÇÃO (Dropbox Ampliada)
-            if (fabs(drops[i].pos.x - naveCenterX) < dropboxW && 
-                fabs(drops[i].pos.y - naveCenterY) < dropboxH) {
-                drops[i].sendoColetado = true; // Inicia a animação de atração
+            if (drops[i].isCombustivel) {
+                corGlow = RED; corMeio = ORANGE; corCentro = YELLOW;
+                tamanhoGlow = 100.0f; tamanhoMeio = 50.0f; tamanhoCentro = 5.0f;
+            } else if (drops[i].tipo == FERRO) { 
+                corGlow = GRAY; corMeio = LIGHTGRAY; corCentro = WHITE;
+                tamanhoGlow = 50.0f; tamanhoMeio = 25.0f; tamanhoCentro = 12.0f;
+            } else if (drops[i].tipo == PRATA) { 
+                corGlow = SKYBLUE; corMeio = BLUE; corCentro = DARKBLUE;
+                tamanhoGlow = 45.0f; tamanhoMeio = 22.0f; tamanhoCentro = 13.0f;
+            } else { // OURO
+                corGlow = ORANGE; corMeio = YELLOW; corCentro = WHITE;
+                tamanhoGlow = 100.0f; tamanhoMeio = 50.0f; tamanhoCentro = 25.0f;
             }
-        } 
-        else {
-            // 1. ATRAÇÃO: Interpola a posição do drop em direção ao centro da nave
-            drops[i].pos.x += (naveCenterX - drops[i].pos.x) * (0.03f+(lvlIma/300.0f)) * mult;
-            drops[i].pos.y += (naveCenterY - drops[i].pos.y) * (0.03f+(lvlIma/300.0f)) * mult;
-            
-            // Calcula a distância atual até o centro da nave
-            float distX = fabs(drops[i].pos.x - naveCenterX);
-            float distY = fabs(drops[i].pos.y - naveCenterY);
 
-            // 2. ENCOLHIMENTO: Só encolhe se estiver muito perto (dentro do miolo da nave)
-            if (distX < 25.0f && distY < 25.0f) {
+            tamanhoGlow += pulsoLoot;
+            tamanhoGlow *= drops[i].escalaVis;
+            tamanhoMeio *= drops[i].escalaVis;
+            tamanhoCentro *= drops[i].escalaVis;
+
+            DrawTexturePro(texParticula, {0, 0, 64, 64}, 
+                {drops[i].pos.x, drops[i].pos.y, tamanhoGlow, tamanhoGlow}, 
+                {tamanhoGlow / 2.0f, tamanhoGlow / 2.0f}, 0.0f, ColorAlpha(corGlow, 0.4f));
                 
-                // Encolhe mais rápido, já que está perto de entrar
-                drops[i].escalaVis -= 0.1f * mult;
-
-                // Fim da Animação: Debita no inventário e apaga
-                if (drops[i].escalaVis <= 0.05f) {
-                    if (drops[i].isCombustivel) {
-                        jogador->minhaNave->combustivelAtual += drops[i].valor;
-                        if (jogador->minhaNave->combustivelAtual > jogador->minhaNave->combustivelMaximo) {
-                            jogador->minhaNave->combustivelAtual = jogador->minhaNave->combustivelMaximo;
-                        }
-                    } else {
-                        jogador->minhaNave->GuardarMinerio(drops[i].tipo, drops[i].valor);
-                    }
-
-                    drops.erase(drops.begin() + i);
-                    i--;
-                    continue;
-                }
-            }
+            DrawTexturePro(texParticula, {0, 0, 64, 64}, 
+                {drops[i].pos.x, drops[i].pos.y, tamanhoMeio, tamanhoMeio}, 
+                {tamanhoMeio / 2.0f, tamanhoMeio / 2.0f}, 0.0f, ColorAlpha(corMeio, 0.8f));
+                
+            DrawTexturePro(texParticula, {0, 0, 64, 64}, 
+                {drops[i].pos.x, drops[i].pos.y, tamanhoCentro, tamanhoCentro}, 
+                {tamanhoCentro / 2.0f, tamanhoCentro / 2.0f}, 0.0f, corCentro);
         }
-
-        // --- 2. DESENHO COM BRILHO ---
-        Color corGlow, corMeio, corCentro;
-        float tamanhoGlow, tamanhoMeio, tamanhoCentro;
-        
-        float pulsoLoot = sin(GetTime() * 10.0f + i) * 29.0f; 
-
-        if (drops[i].isCombustivel) {
-            corGlow = RED; corMeio = ORANGE; corCentro = YELLOW;
-            tamanhoGlow = 100.0f; tamanhoMeio = 50.0f; tamanhoCentro = 5.0f;
-        } else if (drops[i].tipo == FERRO) { 
-            corGlow = GRAY; corMeio = LIGHTGRAY; corCentro = WHITE;
-            tamanhoGlow = 50.0f; tamanhoMeio = 25.0f; tamanhoCentro = 12.0f;
-        } else if (drops[i].tipo == PRATA) { 
-            corGlow = SKYBLUE; corMeio = BLUE; corCentro = DARKBLUE;
-            tamanhoGlow = 45.0f; tamanhoMeio = 22.0f; tamanhoCentro = 13.0f;
-        } else { // OURO
-            corGlow = ORANGE; corMeio = YELLOW; corCentro = WHITE;
-            tamanhoGlow = 100.0f; tamanhoMeio = 50.0f; tamanhoCentro = 25.0f;
-        }
-
-        tamanhoGlow += pulsoLoot;
-
-        // O SEGREDO: Multiplica os tamanhos pela escala da animação
-        tamanhoGlow *= drops[i].escalaVis;
-        tamanhoMeio *= drops[i].escalaVis;
-        tamanhoCentro *= drops[i].escalaVis;
-
-        DrawTexturePro(texParticula, {0, 0, 64, 64}, 
-            {drops[i].pos.x, drops[i].pos.y, tamanhoGlow, tamanhoGlow}, 
-            {tamanhoGlow / 2.0f, tamanhoGlow / 2.0f}, 0.0f, ColorAlpha(corGlow, 0.4f));
-            
-        DrawTexturePro(texParticula, {0, 0, 64, 64}, 
-            {drops[i].pos.x, drops[i].pos.y, tamanhoMeio, tamanhoMeio}, 
-            {tamanhoMeio / 2.0f, tamanhoMeio / 2.0f}, 0.0f, ColorAlpha(corMeio, 0.8f));
-            
-        DrawTexturePro(texParticula, {0, 0, 64, 64}, 
-            {drops[i].pos.x, drops[i].pos.y, tamanhoCentro, tamanhoCentro}, 
-            {tamanhoCentro / 2.0f, tamanhoCentro / 2.0f}, 0.0f, corCentro);
-
-        // --- 3. LIMPEZA DA TELA ---
-        if (!drops[i].sendoColetado && drops[i].pos.y > 750) {
-            drops.erase(drops.begin() + i);
-            i--;
-        }
-    }
-    EndBlendMode(); // DESLIGA O BRILHO
+        EndBlendMode();
 
         
         char pontos_str[10];
@@ -1365,162 +1542,21 @@ void desenhar() {
             DrawText(txt, (GetScreenWidth() / 2) - (txtW / 2), avisoY, fontSize, GREEN);
         }
 
-        // 1.5. Aviso de Zona Segura 
-        estavaNoCinturao = false;
-        timerZonaSegura = 0.0f;
-        bool semMeteoros = true;
-        for (auto& m : meteoros) if (m.ativo) semMeteoros = false;
-
-        if (temCinturao) estavaNoCinturao = true;
-        if (!temCinturao && estavaNoCinturao && semMeteoros) {
-            timerZonaSegura = 3.0f; // Avisa por 3 segundos
-            estavaNoCinturao = false;
-        }
-
-        // 2. Lógica de Máximo de Meteoros (Cinturão VERDADEIRO)
-        bool velocidadeBaixa = (jogador->minhaNave->velocidadeAtual <= 500.0f);
-        int limiteMeteoros = 0;
-        
-        if (!winn && !boss) {
-            if (temCinturao) {
-                limiteMeteoros = 10; // 10 METEOROS AO MESMO TEMPO NA TELA!
-            } else if (velocidadeBaixa) {
-                limiteMeteoros = 2; // Farm tranquilo
-            }
-        }
-
-        // 2.5 Conta meteoros e checa se já tem um de emergência na tela
-        int meteorosAtivos = 0;
-        bool temEmergenciaNaTela = false;
-        for (auto& m : meteoros) {
-            if (m.ativo) {
-                meteorosAtivos++;
-                if (m.isEmergencia) temEmergenciaNaTela = true;
-            }
-        }
-
-        // --- SISTEMA ANTI-SOFTLOCK (Meteoro de Emergência) ---
-        // Se a nave está parada E sem combustível, spawna 1 meteoro viajante de vez em quando
-        if (jogador->minhaNave->velocidadeAtual <= 0.0f && jogador->minhaNave->combustivelAtual <= 0.0f && !temEmergenciaNaTela && !winn && !boss) {
-            // Chance rara por frame para ele aparecer ocasionalmente, e não toda hora
-            if (GetRandomValue(0, 100) == 1) { 
-                Meteoro emg;
-                emg.ativo = true;
-                emg.isEmergencia = true;
-                emg.fall = 0; 
-                emg.rot = 0.0f;
-                emg.rotSpeed = (float)GetRandomValue(30, 150) * ((GetRandomValue(0, 1) == 0) ? 1.0f : -1.0f);
-
-                // Sorteia a origem: 0=Topo, 1=Esquerda, 2=Direita
-                int origem = GetRandomValue(0, 2);
-                if (origem == 0) { // Topo
-                    emg.pos = { (float)GetRandomValue(100, 1100), -100.0f };
-                    emg.velIndependente = { (float)GetRandomValue(-30, 30) / 10.0f, (float)GetRandomValue(20, 50) / 10.0f };
-                } else if (origem == 1) { // Esquerda
-                    emg.pos = { -100.0f, (float)GetRandomValue(50, 400) };
-                    emg.velIndependente = { (float)GetRandomValue(20, 50) / 10.0f, (float)GetRandomValue(-10, 30) / 10.0f };
-                } else { // Direita
-                    emg.pos = { 1300.0f, (float)GetRandomValue(50, 400) };
-                    emg.velIndependente = { (float)GetRandomValue(-50, -20) / 10.0f, (float)GetRandomValue(-10, 30) / 10.0f };
-                }
-                meteoros.push_back(emg);
-                meteorosAtivos++;
-            }
-        }
-
-        // --- SPAWN NORMAL DE METEOROS ---
-        while (meteorosAtivos < limiteMeteoros) {
-            Meteoro novo;
-            novo.pos.x = (float)GetRandomValue(30, 1150);
-            novo.pos.y = (float)GetRandomValue(-800, -100); 
-            novo.fall = (float)GetRandomValue(4, 9);
-            novo.rot = 0.0f;
-            novo.rotSpeed = (float)GetRandomValue(30, 150) * ((GetRandomValue(0, 1) == 0) ? 1.0f : -1.0f);
-            novo.ativo = true;
-            novo.isEmergencia = false;
-            novo.velIndependente = {0.0f, 0.0f};
-            meteoros.push_back(novo);
-            meteorosAtivos++;
-        }
-
-        // 3. Física, Desenho e Colisão de TODOS os Meteoros
+        // --- DESENHO DOS METEOROS ---
         for (int m = 0; m < (int)meteoros.size(); m++) {
             if (!meteoros[m].ativo) continue;
-
-            // Movimento rasgando a tela
-            // Movimento: Independente se for emergência, relativo se for normal
-            if (meteoros[m].isEmergencia) {
-                meteoros[m].pos.x += meteoros[m].velIndependente.x * mult;
-                meteoros[m].pos.y += meteoros[m].velIndependente.y * mult;
-            } else {
-                meteoros[m].pos.y += (meteoros[m].fall * world_speed_factor) * mult;
-            }
-            meteoros[m].rot += meteoros[m].rotSpeed * GetFrameTime();
-
-            // Desenho
             float w = (float)meteoro_tex.width; 
             float h = (float)meteoro_tex.height;
             DrawTexturePro(meteoro_tex, { 0.0f, 0.0f, w, h }, 
                            { meteoros[m].pos.x + w/2.0f, meteoros[m].pos.y + h/2.0f, w, h }, 
                            { w/2.0f, h/2.0f }, meteoros[m].rot, WHITE);
-
-            // Colisão com a Nave (Escudo e I-frames)
-            if (jogador->minhaNave->escudoAtual > 0 && 
-                meteoros[m].pos.y >= nave_y - 10 && meteoros[m].pos.y <= nave_y + 80 && 
-                meteoros[m].pos.x >= nave_x - 30 && meteoros[m].pos.x <= nave_x + 65) {
-                
-                if (jogador->minhaNave->iFrame <= 0.0f) {
-                    jogador->minhaNave->escudoAtual--;
-                    jogador->minhaNave->iFrame = 2.0f;
-                    PlaySound(bomb);
-                }
-
-                // --- NOVA LÓGICA DE EXPLOSÃO NO ESCUDO ---
-                // Pega os centros exatos
-                float centroEscudoX = nave_x + 50.0f;
-                float centroEscudoY = nave_y + 45.0f;
-                float centroMeteoroX = meteoros[m].pos.x + 30.0f;
-                float centroMeteoroY = meteoros[m].pos.y + 20.0f;
-
-                // Calcula a direção do impacto (Vetor Direcional)
-                float dx = centroMeteoroX - centroEscudoX;
-                float dy = centroMeteoroY - centroEscudoY;
-                float distancia = sqrt(dx*dx + dy*dy);
-
-                Vector2 posExplosao = {centroMeteoroX, centroMeteoroY};
-
-                // Empurra a explosão exatamante para a "casca" do escudo (raio de 75 pixels)
-                if (distancia > 0) {
-                    posExplosao.x = centroEscudoX + (dx / distancia) * 75.0f;
-                    posExplosao.y = centroEscudoY + (dy / distancia) * 75.0f;
-                }
-
-                fxExplosoes->AdicionarExplosao(posExplosao, METEOR); 
-                
-                meteoros[m].ativo = false; // Desativa a pedra
-            }
-
-            // Limpeza: Se saiu da tela, desativa para o Spawner criar outro lá em cima
-            if (meteoros[m].pos.y > 800 || meteoros[m].pos.x < -250 || meteoros[m].pos.x > 1450 || meteoros[m].pos.y < -250) {
-                meteoros[m].ativo = false;
-            }
         }
-        
-        // Remove os inativos da memória para o vetor não crescer infinitamente
         for (int m = 0; m < (int)meteoros.size(); m++) {
             if (!meteoros[m].ativo) {
                 meteoros.erase(meteoros.begin() + m);
                 m--;
             }
         }
-
-        exp_x = nave_x;
-        hitbox1x = nave_x + 10; hitbox2x = nave_x + 38;
-        exp_x = nave_x;
-        exp_y = nave_y;
-        hitbox1y = nave_y + 40; hitbox2y = nave_y + 10;
-        exp_y = nave_y;
-        hitbox1y = nave_y + 40; hitbox2y = nave_y + 10;
 
         // =================================================================
         // --- ATIVADORES DE COMBATE ---
@@ -1666,161 +1702,35 @@ void desenhar() {
             }
         }
 
-        // TIRO DO INIMIGO NORMAL 
+        // --- DESENHO DOS INIMIGOS E TIROS INIMIGOS ---
         if (tiroenemy_ativo) {
             BeginBlendMode(BLEND_ADDITIVE);
-            // Visual roxo para diferenciar
             DrawTexturePro(texParticula, {0,0,64,64}, {tiroenemy_x, tiroenemy_y, 16.0f, 32.0f}, {8.0f, 16.0f}, 0.0f, ColorAlpha(PURPLE, 0.7f));
             DrawEllipse(tiroenemy_x, tiroenemy_y, 3.0f, 12.0f, WHITE);
             EndBlendMode();
-
-            // O inimigo está voando do seu lado. O tiro viaja na velocidade DELE, ignora o mundo!
-            tiroenemy_y += 5.0f * mult;
-
-            if (tiroenemy_y > 750) tiroenemy_ativo = false;
-
-            // Colisão do Tiro Inimigo com o Player
-            // nave_x + 20 empurra a hitbox do tiro para a direita, centralizando na lataria
-            if (vida > 0 && tiroenemy_y >= nave_y && tiroenemy_y <= nave_y + 80 && 
-                tiroenemy_x >= nave_x + 20 && tiroenemy_x <= nave_x + 70) {
-                if (death_sound_delay == 0) { PlaySound(bomb); death_sound_delay = 20; }
-                jogador->minhaNave->escudoAtual--;
-                tiroenemy_ativo = false; 
-            }
         }
 
-        // --- COMPORTAMENTO DO INIMIGO NORMAL ---
-        if(enemy) {
-            if (enemylife <= 0) {
-                // 1. MORTE ÚNICA
-                PlaySound(bomb);
-                fxExplosoes->AdicionarExplosao({(float)enemyx + 30, (float)enemyy + 20}, SMALL_SHIP); 
-                
-                // 2. DROP GARANTIDO (1 Ouro, 4 Ferros)
-                for(int j=0; j<5; j++) {
-                    Drop d; 
-                    d.pos = {(float)enemyx+30, (float)enemyy+20};
-                    float ang = GetRandomValue(180, 360) * DEG2RAD; 
-                    float spd = GetRandomValue(50, 90) / 10.0f; 
-                    d.vel = { cosf(ang) * spd, sinf(ang) * spd };
-                    
-                    d.tipo = (j == 0) ? OURO : FERRO; 
-                    d.valor = (j == 0) ? 2 : 10; // Ouro vale 2, Ferros valem 10 cada
-                    drops.push_back(d);
-                }
-                // 2.5 DROP DE COMBUSTÍVEL (Exclusivo do Inimigo)
-                for(int j=0; j<3; j++) { // Solta 3 orbs
-                    Drop d; 
-                    d.pos = {(float)enemyx+30, (float)enemyy+20};
-                    float ang = GetRandomValue(180, 360) * DEG2RAD; 
-                    float spd = GetRandomValue(30, 60) / 10.0f; 
-                    d.vel = { cosf(ang) * spd, sinf(ang) * spd };
-                    d.isCombustivel = true;
-                    d.valor = 15; // Cada orb recupera 15 de combustível
-                    drops.push_back(d);
-                }
-                enemy = false;
-                enemy_defeated = true; // Trava ativada! Nunca mais renasce.
-            } 
-            else {
-                // 3. DESENHO E MOVIMENTO
-                DrawTexture(enemynav, enemyx, enemyy, enemyColor);
-                
-                // Barra de Vida / Texto em cima
-                DrawText(TextFormat("%d", enemylife), enemyx + 10, enemyy - 5, 20, RED);
-
-                if(enemyy < 150) enemyy += (int)(2 * mult);
-                if(enemyy >= 150){
-                    enemyy = 150;
-                    if(enemyx < nave_x) enemyx += (int)(1.5f * mult); // Segue mais devagar
-                    if(enemyx > nave_x) enemyx -= (int)(1.5f * mult);
-                }
-
-                // 4. ATIRA NO JOGADOR (Frequência baixa)
-                enemy_shoot_timer -= mult;
-                if (enemy_shoot_timer <= 0 && !tiroenemy_ativo) {
-                    tiroenemy_ativo = true;
-                    tiroenemy_x = enemyx + 30; // Meio do inimigo
-                    tiroenemy_y = enemyy + 40;
-                    enemy_shoot_timer = 150.0f; // Cooldown longo
-                }
-            }
+        if (enemy && enemylife > 0) {
+            DrawTexture(enemynav, enemyx, enemyy, enemyColor);
+            DrawText(TextFormat("%d", enemylife), enemyx + 10, enemyy - 5, 20, RED);
         }
 
         fxExplosoes->Desenhar();
 
         if (winn) {
-            pisc++;
             if (pisc < 100) {
                 DrawText("PRESS M TO RETURN TO MAP", 440, 460, 20, WHITE);
                 DrawText("PRESS ENTER TO LAND", 440, 500, 20, WHITE);
             }
-            if (pisc >= 200) pisc = 0;
-            
-            if (winn) {
-            pisc++;
-            if (pisc < 100) {
-                DrawText("PRESS M TO RETURN TO MAP", 440, 460, 20, WHITE);
-                DrawText("PRESS ENTER TO LAND", 440, 500, 20, WHITE);
-            }
-            if (pisc >= 200) pisc = 0;
-            
-            if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_M)) {
-                
-                // 1. Gera o arquivo de retorno completo para o mapa receber sem bugar
-                std::ofstream arqRetorno("pos_viagem.txt");
-                if (arqRetorno.is_open()) {
-                    arqRetorno << jogador->minhaNave->combustivelAtual << " "
-                               << jogador->minhaNave->escudoAtual << " "
-                               << jogador->minhaNave->invFerro << " "
-                               << jogador->minhaNave->invPrata << " "
-                               << jogador->minhaNave->invOuro << " "
-                               << jogador->dinheiro << " "
-                               << jogador->minhaNave->velocidadeAtual << " "
-                               << jogador->minhaNave->timerCondensador << "\n";
-                    arqRetorno.close();
-                }
-
-                if (IsKeyPressed(KEY_M)) {
-                    system("cd ../EstelarMap && start MapaEstelar.exe"); 
-                }
-                
-                quit = true; 
-            }
         }
-        }
-        if (death_sound_delay > 0) {
-            death_sound_delay--;
-            if (death_sound_delay == 0 && vida == 0) {
-                PlaySound(ai);
-            }
-        }
+        
         if (vida < 1) {
-            bum++;
-            pisc++;
-                    //CHAMAR EXPLOSAO GRANDE
-            if (bum == 1) { // Só no primeiro frame da morte
-                fxExplosoes->AdicionarExplosao({(float)nave_x + 40, (float)nave_y + 40}, LARGE_SHIP);
-            }
             DrawTexture(mort, mort_x, mort_y, WHITE);
             if (pisc < 100) {
                 DrawText("PRESS R TO RESPAWN", 450, 420, 20, RED);
             }
-            if (pisc >= 200) {
-                pisc = 0;
-            }
-            if (IsKeyPressed(KEY_R)) {
-                winn = false;
-                vida = 10;
-                jogador->minhaNave->escudoAtual=1;
-                pontos = 1;
-                bum = 0;
-                boss_defeated = false;
-                jogador->minhaNave->combustivelAtual = jogador->minhaNave->combustivelMaximo;
-                //jogador->minhaNave->velocidadeAtual = (float)GetRandomValue(80, 2500); // Sorteia o lançamento de novo
-                if (boss) chefeFinal->Resetar(); 
-            }
         }
+
     }
     EndDrawing();
 }
@@ -1924,9 +1834,7 @@ int main() {
     jogador->minhaNave->velocidadeAtual = 50.0f;
 
     // --- INICIALIZAÇÃO DAS VARIÁVEIS ---
-    exp_x = nave_x; exp_y = nave_y; death_x = nave_x - 30; death_y = nave_y + 10; fire_x = nave_x + 30;
-    fire_y = nave_y + 84; sol_x = GetRandomValue(10, 1100); sol_y = GetRandomValue(10, 400);
-    hitbox1x = nave_x + 10; hitbox1y = nave_y + 40; hitbox2x = nave_x + 38; hitbox2y = nave_y + 10;
+    fire_x = nave_x + 30; fire_y = nave_y + 84; 
 
     // --- INICIALIZAÇÃO DO FUNDO DE ESTRELAS ---
     Color COLOR_ROXO = {128, 0, 128, 255}; Color COLOR_CINZA_ESCURO = {80, 80, 80, 255}; Color COLOR_CINZA = {128, 128, 128, 255};
@@ -1985,6 +1893,14 @@ int main() {
         // Se o PC for muito rápido e o frame for minúsculo, garante um mínimo
         if (mult < 0.1f) mult = 0.1f;
         controle();
+        if (!menu) {
+            AtualizarViagem();
+            AtualizarDrops();
+            AtualizarTiros();
+            AtualizarMeteoros();
+            AtualizarInimigos();
+            AtualizarEstadoDeJogo();
+        }
         float velocidadeQuedaCenario = IsKeyDown(KEY_K) ? 10.0f : 3.0f; // Turbo afeta o fundo
         fxExplosoes->Atualizar(GetFrameTime(), velocidadeQuedaCenario);
         UpdateMusicStream(background_music);
