@@ -2,6 +2,21 @@
 #include "Player.h"
 #include "Nave.h"
 
+#include <vector>
+
+// 1. O Boss precisa saber o "formato" da struct para conseguir criar uma
+struct EfeitoEscudo {
+    Vector2 pos;
+    float raioAtual = 0.0f;
+    float raioMaximo = 12.0f; 
+    bool crescendo = true;
+};
+
+// 2. EXTERN: Conecta as variáveis globais do SpaceGameplayOO.cpp diretamente aqui!
+extern std::vector<EfeitoEscudo> efeitosEscudo;
+extern float timerOpacidadeEscudo;
+extern int vida;
+
 Boss::Boss() {
     escalaBoss = 0.15f;
     x = 400; y = -600; vida = 50;
@@ -305,22 +320,25 @@ void Boss::ComportamentoVivo(float mult, float dt, Player* jogador, int death_x,
             // 3. Núcleo de Plasma (Fino e Branco - essencial para parecer luz real)
             DrawEllipse((int)tirosBoss[t].pos.x, (int)tirosBoss[t].pos.y, 2.0f, 10.0f, WHITE);
 
-            // Verifica colisão do tiro do Boss com o Player
-            // Colisão do Tiro do Boss com a Nave (Escudo e I-frames)
-            // Mantive a largura + 65 pra ficar igual a hitbox perfeita que fizemos antes!
-            if (jogador->minhaNave->escudoAtual > 0 && 
+            // Colisão do Tiro do Boss com a Nave
+            if (jogador->minhaNave->iFrame <= 0.0f &&
                 tirosBoss[t].pos.y >= death_y && tirosBoss[t].pos.y <= death_y + 80 && 
                 tirosBoss[t].pos.x >= death_x && tirosBoss[t].pos.x <= death_x + 65) {
                 
-                // Se NÃO está invulnerável, toma dano
-                if (jogador->minhaNave->iFrame <= 0.0f) {
+                if (jogador->minhaNave->escudoAtual > 0) {
                     jogador->minhaNave->escudoAtual--;
-                    jogador->minhaNave->iFrame = 2.0f; // Fica invulnerável por 1 seg
-                    tocaSomDano = true; // Avisa o jogo principal para tocar o som de dano
+                    timerOpacidadeEscudo = 0.5f; // Acende o escudo visualmente
+                    
+                    EfeitoEscudo ef;
+                    ef.pos = { tirosBoss[t].pos.x, tirosBoss[t].pos.y }; 
+                    efeitosEscudo.push_back(ef);
+                } 
+                else {
+                    vida = 0; // GAME OVER GAMES!
                 }
                 
-                // O tiro do boss sempre some ao bater no escudo
-                tirosBoss[t].ativo = false;
+                tirosBoss[t].ativo = false; // O tiro some ao bater
+                tocaSomDano = true; // Avisa o jogo para tocar o som
             }
 
             if (tirosBoss[t].pos.y > 750) tirosBoss[t].ativo = false;

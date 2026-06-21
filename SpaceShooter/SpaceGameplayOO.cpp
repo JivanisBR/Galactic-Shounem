@@ -53,6 +53,13 @@ int indexZonaPirataAtual = -1;
 Boss* chefeFinal = nullptr; 
 bool boss_defeated = false;
 
+float timerOpacidadeEscudo = 0.0f;
+float cooldownSalto = 0.0f;
+// --- ESTADOS DO DASH ---
+float tempoDash = 0.0f;
+float dashDirX = 0.0f;
+float dashDirY = 0.0f;
+
 struct Drop {
     Vector2 pos; // Usando Vector2 para facilitar a física
     Vector2 vel; // Velocidade da explosão
@@ -628,15 +635,20 @@ void AtualizarMeteoros() {
         }
         meteoros[m].rot += meteoros[m].rotSpeed * GetFrameTime();
 
-        if (jogador->minhaNave->escudoAtual > 0 && 
+        // Colisão da nave com meteoro
+        if (vida > 0 && jogador->minhaNave->iFrame <= 0.0f && 
             meteoros[m].pos.y >= nave_y - 10 && meteoros[m].pos.y <= nave_y + 80 && 
             meteoros[m].pos.x >= nave_x - 30 && meteoros[m].pos.x <= nave_x + 65) {
             
-            if (jogador->minhaNave->iFrame <= 0.0f) {
+            // Se tem escudo, perde 1. Se não tem, morre.
+            if (jogador->minhaNave->escudoAtual > 0) {
                 jogador->minhaNave->escudoAtual--;
-                jogador->minhaNave->iFrame = 2.0f;
-                PlaySound(bomb);
+                timerOpacidadeEscudo = 0.5f;
+            } else {
+                vida = 0; // Lataria exposta: GAME OVER GAMES
             }
+            
+            PlaySound(bomb);
 
             float centroEscudoX = nave_x + 50.0f;
             float centroEscudoY = nave_y + 45.0f;
@@ -680,24 +692,24 @@ void AtualizarInimigos() {
         if (tiroenemy_y > 750) tiroenemy_ativo = false;
 
         // Colisão com o Escudo/Nave do Jogador
-        if (vida > 0 && tiroenemy_y >= nave_y && tiroenemy_y <= nave_y + 80 && 
+        if (vida > 0 && jogador->minhaNave->iFrame <= 0.0f && tiroenemy_y >= nave_y && tiroenemy_y <= nave_y + 80 && 
             tiroenemy_x >= nave_x + 20 && tiroenemy_x <= nave_x + 80) {
             
             if (death_sound_delay == 0) { PlaySound(bomb); death_sound_delay = 20; }
             
-            if (jogador->minhaNave->iFrame <= 0.0f) {
-                jogador->minhaNave->escudoAtual--;
-                jogador->minhaNave->iFrame = 2.0f;
-                PlaySound(bomb);
-            }
-            tiroenemy_ativo = false; 
-            
-            // Adiciona o efeito visual de impacto no escudo
             if (jogador->minhaNave->escudoAtual > 0) {
+                jogador->minhaNave->escudoAtual--;
+                timerOpacidadeEscudo = 0.5f; // Acende o escudo visualmente
+                
+                // Só desenha a dispersão do escudo se ele existir
                 EfeitoEscudo ef;
                 ef.pos = { tiroenemy_x, tiroenemy_y }; 
                 efeitosEscudo.push_back(ef);
+            } else {
+                vida = 0; // GAME OVER!
             }
+            
+            tiroenemy_ativo = false; 
         }
     }
 
@@ -756,8 +768,6 @@ void AtualizarInimigos() {
 
 // --- GERENCIAMENTO DE ESTADO DE JOGO (VITÓRIA E DERROTA) ---
 void AtualizarEstadoDeJogo() {
-    // Sincroniza a morte
-    if (jogador->minhaNave->escudoAtual <= 0) vida = 0;
 
     // Lógica do Som de Morte
     if (death_sound_delay > 0) {
@@ -818,6 +828,11 @@ void AtualizarViagem() {
     
     if (jogador->minhaNave->iFrame > 0.0f) {
         jogador->minhaNave->iFrame -= GetFrameTime();
+    }
+
+    if (timerOpacidadeEscudo > 0.0f) {
+        timerOpacidadeEscudo -= GetFrameTime();
+        if (timerOpacidadeEscudo < 0.0f) timerOpacidadeEscudo = 0.0f;
     }
     
     bool turbo_on = IsKeyDown(KEY_K);
@@ -1017,7 +1032,7 @@ void controle() {
             for (int i = 0; i < qtdTiros; i++) {
                 Tiro novoTiro = {};
                 novoTiro.x = inicioX + (i * espacamento);
-                novoTiro.y = (float)nave_y+60.0f;
+                novoTiro.y = (float)nave_y+30.0f;
                 novoTiro.ativo = true;
                 
                 tiros.push_back(novoTiro);
@@ -1031,35 +1046,87 @@ void controle() {
             cooldownTiro = 50.0f - (jogador->minhaNave->levelTiro * 5.0f); 
             if (cooldownTiro < 5.0f) cooldownTiro = 5.0f;
         }
-        if (IsKeyDown(KEY_A) && vida > 0 || IsKeyDown(KEY_LEFT) && vida > 0) {
-            nave_x -= (int)(jogador->minhaNave->velocidadeMovimentacao * mult);
-            foga++;
-            if (foga > 90) foga = 0;
-        }
-        if (IsKeyDown(KEY_D) && vida > 0 || IsKeyDown(KEY_RIGHT) && vida > 0) {
-            nave_x += (int)(jogador->minhaNave->velocidadeMovimentacao * mult);
-            fogd++;
-            if (fogd > 90) fogd = 0;
-        }
-        if (IsKeyDown(KEY_W) && vida > 0 || IsKeyDown(KEY_UP) && vida > 0) {
-            nave_y -= (int)(jogador->minhaNave->velocidadeMovimentacao * mult);
-            fogd++;
-            if (fogd > 90) fogd = 0;
-        }
-        if (IsKeyDown(KEY_S) && vida > 0 || IsKeyDown(KEY_DOWN) && vida > 0) {
-            nave_y += (int)(jogador->minhaNave->velocidadeMovimentacao * mult);
-            fogd++;
-            if (fogd > 90) fogd = 0;
+
+        // --- SISTEMA DE SALTO SUB-LUZ -----------------------------------------
+        if (cooldownSalto > 0.0f) cooldownSalto -= GetFrameTime();
+
+        // Valida se tem pelo menos 10 de combustível antes de ativar
+        if (IsKeyPressed(KEY_J) && cooldownSalto <= 0.0f && vida > 0 && tempoDash <= 0.0f && jogador->minhaNave->combustivelAtual >= 10.0f) {
+            float dirX = 0;
+            float dirY = 0;
+
+            if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) dirX -= 1.0f;
+            if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) dirX += 1.0f;
+            if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP)) dirY -= 1.0f;
+            if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN)) dirY += 1.0f;
+
+            if (dirX != 0 || dirY != 0) {
+                // Drena 10 de combustível imediatamente no arranque
+                jogador->minhaNave->combustivelAtual -= 10.0f;
+
+                float length = sqrt(dirX * dirX + dirY * dirY);
+                dashDirX = dirX / length;
+                dashDirY = dirY / length;
+                
+                tempoDash = 0.15f; 
+                jogador->minhaNave->iFrame = 0.3f; // Ativa a janela de invencibilidade
+                cooldownSalto = 5.0f;
+            }
         }
 
-        // Limites de tela (SEM HITBOX DENTRO)
-        if (nave_x > 1115) nave_x = 1115;
-        if (nave_x < -10) nave_x = -10;
-        if (nave_y > 600) nave_y = 600;
-        if (nave_y < 20) nave_y = 20;
+        // --- EXECUÇÃO DO MOVIMENTO (DASH OU NORMAL) ---
+        if (tempoDash > 0.0f) {
+            // 1. MODO DESLIZAMENTO (AUTOMÁTICO)
+            float dt = GetFrameTime();
+            tempoDash -= dt;
+            
+            // Velocidade / distancia do salto/dash, ajust a gosto
+            float velDash = 2000.0f; 
+            
+            nave_x += (int)(dashDirX * velDash * dt);
+            nave_y += (int)(dashDirY * velDash * dt);
 
-        fire_x = nave_x + 49;
-        fire_y = nave_y + 84;
+            // Limites de tela
+            if (nave_x > 1115) nave_x = 1115;
+            if (nave_x < -10) nave_x = -10;
+            if (nave_y > 600) nave_y = 600;
+            if (nave_y < 20) nave_y = 20;
+            
+            fire_x = nave_x + 49;
+            fire_y = nave_y + 84;
+        } 
+        else {
+            // 2. MODO MANUAL NORMAL (Desativado durante o dash para evitar bugs)
+            if (IsKeyDown(KEY_A) && vida > 0 || IsKeyDown(KEY_LEFT) && vida > 0) {
+                nave_x -= (int)(jogador->minhaNave->velocidadeMovimentacao * mult);
+                foga++;
+                if (foga > 90) foga = 0;
+            }
+            if (IsKeyDown(KEY_D) && vida > 0 || IsKeyDown(KEY_RIGHT) && vida > 0) {
+                nave_x += (int)(jogador->minhaNave->velocidadeMovimentacao * mult);
+                fogd++;
+                if (fogd > 90) fogd = 0;
+            }
+            if (IsKeyDown(KEY_W) && vida > 0 || IsKeyDown(KEY_UP) && vida > 0) {
+                nave_y -= (int)(jogador->minhaNave->velocidadeMovimentacao * mult);
+                fogd++;
+                if (fogd > 90) fogd = 0;
+            }
+            if (IsKeyDown(KEY_S) && vida > 0 || IsKeyDown(KEY_DOWN) && vida > 0) {
+                nave_y += (int)(jogador->minhaNave->velocidadeMovimentacao * mult);
+                fogd++;
+                if (fogd > 90) fogd = 0;
+            }
+
+            // Limites de tela
+            if (nave_x > 1115) nave_x = 1115;
+            if (nave_x < -10) nave_x = -10;
+            if (nave_y > 600) nave_y = 600;
+            if (nave_y < 20) nave_y = 20;
+
+            fire_x = nave_x + 49;
+            fire_y = nave_y + 84;
+        }
 
     }
     if (IsKeyPressed(KEY_P) && !menu && cdpause > 100) {
@@ -1166,6 +1233,9 @@ void desenhar() {
         DrawText(TextFormat("ESCUDO: %d N", jogador->minhaNave->escudoAtual), 20, 180, 20, SKYBLUE);
         DrawText(TextFormat("CONDENSADOR: %d s", (int)jogador->minhaNave->timerCondensador), 20, 200, 20, SKYBLUE);
         DrawText(TextFormat("DINHEIRO: $%.2f", jogador->dinheiro), 20, 220, 20, GREEN);
+        if (cooldownSalto > 0.0f) {
+            DrawText(TextFormat("SALTO SUB-LUZ: %.1f s", cooldownSalto), 20, 240, 20, PURPLE);
+        }
 
         char distance_str[20];
         sprintf(distance_str, "%.0f       ", distance_left);
@@ -1186,66 +1256,138 @@ void desenhar() {
             bool movendo = IsKeyDown(KEY_W) || IsKeyDown(KEY_A) || IsKeyDown(KEY_S) || IsKeyDown(KEY_D);
             bool freio = IsKeyDown(KEY_L); 
 
+            int lvlEngine = jogador->minhaNave->forcaTurbo;
+            int motor = jogador->minhaNave->levelTurbo;
+
             // Define o tamanho "alvo" do fogo
-            // Turbo: 2.5f
-            // Freio: 0.2f (Foguinho bem pequeno)
-            // Normal: 1.0f ou 0.4f
             float targetScale;
-            //float lvlEngine = jogador->minhaNave->forcaTurbo;
-            if (turbo) targetScale = 2.5f;
-            else if (freio) targetScale = 0.2f;
+            if (turbo) {
+                // Tamanho base 1.5f + um crescimento controlado
+                targetScale = 1.5f + (lvlEngine * 0.05f);
+            }
             else targetScale = (movendo ? 1.0f : 0.4f);
 
-            // Variável estática para guardar o tamanho entre os frames (para a animação ser suave)
+            // Variável estática para guardar o tamanho entre os frames
             static float currentScale = 0.5f;
-
-            // Aumenta ou diminui suavemente em direção ao alvo (Lerp manual)
-            // O '0.1f * mult' define a velocidade da transição
             currentScale += (targetScale - currentScale) * 0.1f * mult;
 
-            // 2. Oscilação (Flicker) para parecer fogo instável
-            // Um valor aleatório pequeno que muda todo frame
-            int flickermin = turbo ? -20 : -10; // Se turbo, pode vibrar mais
-            int flickermax = turbo ? 30 : 10; // Se turbo, pode vibrar mais
-            float flickerX = (float)GetRandomValue(flickermin, flickermax) / 100.0f; // Vibra na largura
-            float flickerY = (float)GetRandomValue(flickermin, flickermax) / 100.0f; // Vibra na altura
+            // 2. Oscilação (Flicker) Dinâmica
+            // O limite de vibração aumenta a cada upgrade, dando a ideia de "descontrole"
+            int bonusFlickerMin = turbo ? (lvlEngine * 0.3f) : 0;
+            int bonusFlickerMax = turbo ? (lvlEngine * 0.6f) : 0;
+            
+            int flickermin = turbo ? -20 - bonusFlickerMin : -10; 
+            int flickermax = turbo ? 30 + bonusFlickerMax : 10; 
+            float flickerX = (float)GetRandomValue(flickermin, flickermax) / 100.0f;
+            float flickerY = (float)GetRandomValue(flickermin, flickermax) / 100.0f;
 
             // 3. Desenho do Propulsor
-            // Usamos a posição fire_x, fire_y que você já configurou
             if(turbo) {
-                // Se turbo, o fogo sai mais para baixo (na lataria) para parecer que está "empurrando" mais
-                if(fire_y > nave_y + 24){
-                    fire_y -= 1; // Sobe lentamente para a posição do motor
-                }
+                if(fire_y > nave_y + 24) fire_y -= 1; 
+            } else {
+                if(fire_y < nave_y + 84) fire_y += 1; 
             }
-            else {
-                // Se não, fica um pouco mais contido
-                if(fire_y < nave_y + 84){
-                    fire_y += 1; // Desce lentamente para a posição do motor
-                }
-            }
-            float compensacaoY = turbo ? 35.0f : 10.0f;
+            float compensacaoY = turbo ? 5.0f : 4.0f;
+
             Vector2 enginePos = {(float)fire_x, (float)fire_y - compensacaoY};
+
+            // 4. Densidade de Cores (Alpha Dinâmico)
+            float alphaGlow = turbo ? fmin(0.6f + (lvlEngine * 0.08f), 1.0f) : 0.6f;
+            float alphaCore = turbo ? fmin(0.8f + (lvlEngine * 0.08f), 1.0f) : 0.8f;
+
+            // --- CORES BASEADAS NO NÍVEL DO UPGRADE ---
+            Color corAura = GOLD;
+            Color corNucleo = YELLOW;
+            Color PURPLEPILL = { 85, 26, 139, 255 };
+            Color DARKRED = { 139, 0, 0, 255 };
+            Color corPlasma = WHITE;
+            
+            if (motor == 2) { corAura = ORANGE; corNucleo = RED; }
+
+            else if (motor == 3) { corAura = RED; corNucleo = DARKRED; corPlasma = RED; }
+
+            else if (motor == 4) { corAura = MAGENTA; corNucleo = PURPLEPILL; corPlasma = PURPLE; }
+
+            else if (motor == 5) { corAura = LIGHTGRAY; corNucleo = WHITE; }
+
+            else if (motor == 6) { 
+                corAura = ColorFromHSV(fmod((float)GetTime() * 20.0f, 360.0f), 1.0f, 1.0f); 
+                corNucleo = WHITE;
+            }
+
+            else if (motor == 7) { 
+                corAura = ColorFromHSV(fmod((float)GetTime() * 30.0f, 360.0f), 1.0f, 1.0f);
+                corNucleo = ColorFromHSV(fmod((float)GetTime() * 30.0f, 360.0f), 1.0f, 1.0f);
+            }
+
+            else if (motor == 8) { 
+                corAura = ColorFromHSV(fmod((float)GetTime() * 25.0f, 360.0f), 1.0f, 1.0f); 
+                corNucleo = ColorFromHSV(fmod((float)GetTime() * 50.0f, 360.0f), 1.0f, 1.0f);
+            }
+
+            else if (motor == 9) { 
+                // GetTime() * 50.0f dita a velocidade do pisca-pisca das cores
+                float hueAura = fmod((float)GetTime() * 50.0f, 360.0f); 
+                corAura = ColorFromHSV(hueAura, 1.0f, 1.0f); 
+                
+                // O núcleo pode ser COLORID para manter a sensação de superaquecimento
+                corNucleo = ColorFromHSV(fmod((float)GetTime() * 48.0f, 360.0f), 1.0f, 1.0f);
+
+                corPlasma = ColorFromHSV(fmod((float)GetTime() * 46.0f, 360.0f), 1.0f, 1.0f);
+            }
+
+            else if (motor >= 10) { 
+                corAura = ColorFromHSV(fmod((float)GetTime() * 80.0f, 360.0f), 1.0f, 1.0f); 
+                corNucleo = ColorFromHSV(fmod((float)GetTime() * 70.0f, 360.0f), 1.0f, 1.0f);
+                corPlasma = ColorFromHSV(fmod((float)GetTime() * 60.0f, 360.0f), 1.0f, 1.0f);
+            }
 
             BeginBlendMode(BLEND_ADDITIVE);
 
-            // CAMADA 1: O Brilho Externo (Aura Azulada/Roxa)
-            // É grande, transparente e vibra menos
-            DrawTexturePro(texParticula, 
-                {0, 0, 64, 64}, 
-                {enginePos.x, enginePos.y + (currentScale), 40.0f * (currentScale + 0.2f), 70.0f * (currentScale + flickerY)}, 
-                {20.0f * (currentScale + 0.2f), 10.0f}, // Ponto de ancoragem (Topo central)
-                0.0f, 
-                ColorAlpha(GOLD, 0.6f));
+            // Trava o crescimento da aura externa (subtraindo parte do bônus do upgrade)
+            float escalaAura = currentScale;
+            if (turbo) escalaAura -= (lvlEngine * 0.01f); 
 
-            // CAMADA 2: O Núcleo de Energia (Ciano/Azul Claro)
-            // Fica dentro, é mais brilhante e vibra mais
-            DrawTexturePro(texParticula, 
+            // CAMADA 1: O Brilho Externo (Aura)
+            if (turbo){
+                DrawTexturePro(texParticula, 
+                {0, 0, 64, 64}, 
+                {enginePos.x, enginePos.y + escalaAura, 40.0f * (escalaAura + 0.2f), 70.0f * (escalaAura + flickerY)}, 
+                {20.0f * (escalaAura + 0.2f), 10.0f}, 
+                0.0f, 
+                ColorAlpha(corAura, alphaGlow));
+            }
+                
+            // CAMADA 2: O Núcleo de Energia
+            if (!freio){
+                DrawTexturePro(texParticula, 
                 {0, 0, 64, 64}, 
                 {enginePos.x, enginePos.y + (currentScale), 25.0f * (currentScale + flickerX), 50.0f * (currentScale + flickerY)}, 
                 {12.5f * (currentScale + flickerX), 0.0f}, 
                 0.0f, 
-                ColorAlpha(YELLOW, 0.8f));
+                ColorAlpha(corNucleo, alphaCore));
+            }
+
+            // CAMADA 3: Plasma Central (Superaquecimento)
+            // Aparece apenas durante o turbo, tornando-se mais espesso e opaco conforme o nível
+            if (turbo) {
+                float whiteScale = (lvlEngine * 0.01f);
+                float alphaWhite = fmin(0.2f + (lvlEngine * 0.12f), 1.0f);
+                
+                DrawTexturePro(texParticula, 
+                    {0, 0, 64, 64}, 
+                    {enginePos.x, enginePos.y, 10.0f * (currentScale + whiteScale + flickerX), 30.0f * (currentScale + whiteScale + flickerY)}, 
+                    {5.0f * (currentScale + whiteScale + flickerX), -5.0f}, 
+                    0.0f, 
+                    ColorAlpha(corPlasma, alphaWhite));
+
+                DrawTexturePro(texParticula, 
+                    {0, 0, 64, 64}, 
+                    {enginePos.x+18.0f, enginePos.y, 5.0f * (currentScale + whiteScale + flickerX), 15.0f * (currentScale + whiteScale + flickerY)}, 
+                    {5.0f * (currentScale + whiteScale + flickerX), -5.0f}, 
+                    0.0f, 
+                    ColorAlpha(corPlasma, alphaWhite));
+            }
 
             EndBlendMode();
 
@@ -1311,44 +1453,85 @@ void desenhar() {
             // A nave pisca (mostrarNave) durante o iFrame
             bool mostrarNave = !(jogador->minhaNave->iFrame > 0.0f && ((int)(GetTime() * 15) % 2 == 0));
 
+            // --- EFEITO VISUAL DO DASH ---
+            if (tempoDash > 0.0f) {
+                // Normaliza o tempo para gerar um pico (0 -> 1 -> 0)
+                float pct = tempoDash / 0.15f; 
+                float escalaPico = 1.0f - fabsf((pct - 0.5f) * 2.0f); 
+
+                // Dobro do tamanho: Largura ~200+, Altura ~100+
+                float wGlow = 700.0f * escalaPico; 
+                float hGlow = 350.0f * escalaPico;
+
+                float wMeio = 600.0f * escalaPico; 
+                float hMeio = 300.0f * escalaPico;
+
+                float wCentro = 300.0f * escalaPico; 
+                float hCentro = 150.0f * escalaPico;
+
+                float cx = (float)nave_x + 50.0f;
+                float cy = (float)nave_y + 45.0f;
+
+                BeginBlendMode(BLEND_ADDITIVE);
+                
+                // 1. Aura Externa (Azul suave e espalhado)
+                DrawTexturePro(texParticula, 
+                    {0, 0, 64, 64}, 
+                    {cx, cy, wGlow, hGlow}, 
+                    {wGlow / 2.0f, hGlow / 2.0f}, 
+                    0.0f, ColorAlpha(BLUE, 0.4f));
+
+                // 2. Núcleo Intermediário (Azul Claro mais denso)
+                DrawTexturePro(texParticula, 
+                    {0, 0, 64, 64}, 
+                    {cx, cy, wMeio, hMeio}, 
+                    {wMeio / 2.0f, hMeio / 2.0f}, 
+                    0.0f, ColorAlpha(SKYBLUE, 0.8f));
+
+                // 3. Fagulha Central (Branco estourado)
+                DrawTexturePro(texParticula, 
+                    {0, 0, 64, 64}, 
+                    {cx, cy, wCentro, hCentro}, 
+                    {wCentro / 2.0f, hCentro / 2.0f}, 
+                    0.0f, WHITE);
+
+                EndBlendMode();
+            }
+
             // Desenha a nave normalmente
-            if (mostrarNave && jogador->minhaNave->escudoAtual > 0) {
+            if (mostrarNave && vida > 0) {
                 DrawTextureRec(nav, sourceRec, posNave, WHITE);
             }
 
-            // O Campo de Força SÓ aparece quando toma dano (no iFrame)
-            if (jogador->minhaNave->iFrame > 0.0f) {
-                // Matemática do pulso (mantemos a mesma para sincronizar tudo)
-                float pulsoEscudo = sin(GetTime() * 20.0f) * 10.0f; 
-                float baseRaio = 75.0f + (pulsoEscudo / 2.0f); // Raio base para a estrutura
-                float tamanhoGlow = baseRaio * 3.0f;           // Tamanho total para a textura de brilho
+            // O Campo de Força aparece no impacto e sofre fade out gradativo
+            if (timerOpacidadeEscudo > 0.0f) {
+                // Converte os 0.5s restantes em uma porcentagem (Alpha Ratio de 1.0 a 0.0)
+                float alphaRatio = timerOpacidadeEscudo / 0.5f; 
+                
+                float baseRaio = 75.0f; // Tamanho fixo, sem pulsar
+                float tamanhoGlow = baseRaio * 3.0f;
 
-                // Centralização exata (baseada nos testes anteriores de hitbox)
                 int centerX = nave_x + 50;
                 int centerY = nave_y + 45;
 
-                // --- 1. O Brilho Volumétrico (Blend Additive / Luz) ---
                 BeginBlendMode(BLEND_ADDITIVE); 
                 
-                // Aura azul externa difusa
+                // Aplicamos o alphaRatio nas cores para apagar suavemente
                 DrawTexturePro(texParticula, 
                     {0, 0, 64, 64}, 
                     { (float)centerX, (float)centerY, tamanhoGlow, tamanhoGlow }, 
                     { tamanhoGlow / 2.0f, tamanhoGlow / 2.0f }, 
-                    0.0f, ColorAlpha(BLUE, 0.5f)); 
+                    0.0f, ColorAlpha(BLUE, 0.5f * alphaRatio)); 
                 
-                // Núcleo branco no centro (efeito "brilho da lâmpada")
                 DrawTexturePro(texParticula, 
                     {0, 0, 64, 64}, 
                     { (float)centerX, (float)centerY, tamanhoGlow * 0.6f, tamanhoGlow * 0.6f }, 
                     { (tamanhoGlow * 0.6f) / 2.0f, (tamanhoGlow * 0.6f) / 2.0f }, 
-                    0.0f, ColorAlpha(SKYBLUE, 0.3f));
+                    0.0f, ColorAlpha(SKYBLUE, 0.3f * alphaRatio));
 
-                Color corCasca = ColorAlpha(SKYBLUE, 0.5f);
-                // Desenha a linha da elipse (raioH e raioV ligeiramente diferentes para dar perspectiva)
-                DrawEllipseLines(centerX, centerY, baseRaio, baseRaio * 0.95f, corCasca);
+                DrawEllipseLines(centerX, centerY, baseRaio, baseRaio * 0.95f, ColorAlpha(SKYBLUE, 0.5f * alphaRatio));
                     
-                EndBlendMode(); // Encerra o modo luz    
+                EndBlendMode();    
             }
 
             // --- ANIMAÇÃO DOS IMPACTOS NO ESCUDO ---
@@ -1406,7 +1589,7 @@ void desenhar() {
                 {lightPos.x, lightPos.y + 30, glowSize, glowSize}, // Destino
                 {glowSize / 2.0f, glowSize / 2.0f}, // Centro (Pivot)
                 0.0f, // Rotação
-                ColorAlpha(YELLOW, glowAlpha) // Azul Céu transparente
+                ColorAlpha(corNucleo, glowAlpha) // Azul Céu transparente
             );
             
             // Um segundo ponto de luz menor e branco no centro, para dar o "pico" de brilho
@@ -1415,7 +1598,7 @@ void desenhar() {
                 {lightPos.x, lightPos.y + 30, glowSize * 0.5f, glowSize * 0.5f}, 
                 {(glowSize * 0.5f) / 2.0f, (glowSize * 0.5f) / 2.0f},
                 0.0f,
-                ColorAlpha(WHITE, glowAlpha * 0.8f) // Branco quase puro
+                ColorAlpha(corNucleo, glowAlpha * 0.8f) // Branco quase puro
             );
 
             EndBlendMode();
@@ -1830,7 +2013,6 @@ int main() {
     jogador = new Player("Piloto"); 
     jogador->minhaNave->CarregarStatus();
     CarregarPlanoDeVoo();
-    jogador->minhaNave->escudoAtual = jogador->minhaNave->escudoMaximo;
     jogador->minhaNave->velocidadeAtual = 50.0f;
 
     // --- INICIALIZAÇÃO DAS VARIÁVEIS ---
