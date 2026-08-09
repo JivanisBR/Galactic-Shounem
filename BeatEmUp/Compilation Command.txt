@@ -1,1 +1,1 @@
-g++ BeatEmUp.cpp -o BeatEmUp.exe -I C:\raylib\raylib-5.5_win64_mingw-w64\include -L C:\raylib\raylib-5.5_win64_mingw-w64\lib -lraylib -lopengl32 -lgdi32 -lwinmm
+g++ BeatEmUp.cpp -o BeatEmUp.exe -I C:\raylib\raylib-5.5_win64_mingw-w64\include -L C:\raylib\raylib-5.5_win64_mingw-w64\lib -lraylib -lopengl32 -lgdi32 -lwinmm -lcomdlg32 -lole32 -luuid
