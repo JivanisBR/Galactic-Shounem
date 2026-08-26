@@ -115,28 +115,120 @@ struct Character {
     enum Mode { ANIMATOR, RAGDOLL, GAMEPLAY };
     Mode currentMode = ANIMATOR;
     float velocityY = 0.0f;
+    float facingDir = 1.0f; // 1.0f = Direita, -1.0f = Esquerda
+
+    bool isTransformed = false;
+    bool isTransforming = false;
+    float transformCooldown = 0.0f;
+    bool isAttacking = false;
+    float lastAnimX = 0.0f;
     
     void Control(float dt, float groundY) {
-        float speed = 600.0f; 
-        bool isMoving = false; // NOVO
+        bool isMoving = false;
+        bool isRunning = IsKeyDown(KEY_LEFT_SHIFT);
+        
+        float speed = isRunning ? 1200.0f : 600.0f; 
 
-        if (IsKeyDown(KEY_A)) { pPelvis->position.x -= speed * dt; isMoving = true; }
-        if (IsKeyDown(KEY_D)) { pPelvis->position.x += speed * dt; isMoving = true; }
+        // 1. Cooldown
+        if (transformCooldown > 0.0f) transformCooldown -= dt;
 
-        // Máquina de estados simples
-        if (isMoving) animator.Play("running", currentAngles);
-        else animator.Play("idle", currentAngles);
-
-        // Gravidade
-        velocityY += 2000.0f * dt; 
-        pPelvis->position.y += velocityY * dt;
-
-        // Colisão com o chão
-        float floorLimit = groundY - 320.0f;
-        if (pPelvis->position.y >= floorLimit) {
-            pPelvis->position.y = floorLimit;
-            velocityY = 0.0f;
+        // 2. Input de Transformação
+        if (IsKeyPressed(KEY_F) && transformCooldown <= 0.0f && !isAttacking) {
+            isTransforming = true;
+            isTransformed = !isTransformed;
+            transformCooldown = 2.0f; 
+            
+            if (isTransformed) {
+                animator.Play("transformation", currentAngles);
+                animator.playDirection = 1.0f;
+            } else {
+                animator.playDirection = -1.0f;
+                animator.currentFrame = 5.0f;
+            }
         }
+
+        // 3. Input de Ataque
+        if (IsKeyPressed(KEY_E) && !isTransformed && !isTransforming && !isAttacking) {
+            isAttacking = true;
+            animator.Play("attack1", currentAngles);
+            lastAnimX = animator.animations["attack1"][0].rootPos.x; // Guarda o X inicial
+        }
+
+        // 4. Movimento Lateral (Travado durante o ataque e transformação)
+        if (!isAttacking && !isTransforming) {
+            if (IsKeyDown(KEY_A)) { pPelvis->position.x -= speed * dt; isMoving = true; facingDir = -1.0f; }
+            if (IsKeyDown(KEY_D)) { pPelvis->position.x += speed * dt; isMoving = true; facingDir = 1.0f; }
+        }
+
+        // 5. Checagem de fim da Transformação
+        if (isTransforming) {
+            if (isTransformed && animator.currentFrame >= 5.0f) {
+                isTransforming = false; 
+            } else if (!isTransformed && animator.currentFrame <= 0.0f) {
+                isTransforming = false; 
+                animator.playDirection = 1.0f; 
+            }
+        }
+
+        // 6. Checagem de fim do Ataque
+        if (isAttacking && animator.animFinished) {
+            isAttacking = false;
+        }
+
+        // 7. Máquina de Estados de Animação
+        if (!isTransforming && !isAttacking) {
+            if (isTransformed) {
+                animator.currentAnim = "transformation";
+                animator.currentFrame = 5.0f;
+            } else {
+                if (isMoving) {
+                    if (isRunning) animator.Play("running", currentAngles);
+                    else animator.Play("walking", currentAngles);
+                } else {
+                    animator.Play("idle", currentAngles);
+                }
+            }
+        }
+
+        // 1. Posição Y base de quando o boneco está em pé no chão
+        float basePelvisY = groundY - 422.5f;
+
+        // 2. Calcula a flexão/salto interpolado da animação para evitar flicks
+        float animOffsetY = 0.0f;
+        if (animator.animations.find(animator.currentAnim) != animator.animations.end()) {
+            auto& track = animator.animations[animator.currentAnim];
+            
+            int idx1 = (int)animator.currentFrame;
+            int idx2 = (idx1 + 1) % track.size();
+            float blend = animator.currentFrame - idx1;
+
+            // Extrai a posição Y exata calculando a transição entre um frame e outro
+            float currentAnimY = track[idx1].rootPos.y + (track[idx2].rootPos.y - track[idx1].rootPos.y) * blend;
+            
+            // 482.5f é a altura padrão da pélvis no modo ANIMATOR
+            animOffsetY = currentAnimY - 482.5f; 
+        }
+
+        // 3. Aplica o Root Motion X exclusivo para o Ataque
+        if (isAttacking && animator.currentAnim == "attack1" && !animator.isBlending) {
+            auto& track = animator.animations["attack1"];
+            int idx1 = (int)animator.currentFrame;
+            int idx2 = (idx1 + 1) % track.size();
+            float blend = animator.currentFrame - idx1;
+            
+            // X atual da animação
+            float currentAnimX = track[idx1].rootPos.x + (track[idx2].rootPos.x - track[idx1].rootPos.x) * blend;
+            
+            // Pega a diferença do último frame e multiplica pelo lado que o boneco olha
+            float deltaX = (currentAnimX - lastAnimX) * facingDir; 
+            
+            pPelvis->position.x += deltaX; // Empurra a física
+            lastAnimX = currentAnimX;      // Salva para o próximo tick
+        }
+
+        // 4. Aplica o movimento vertical da animação direto no corpo
+        pPelvis->position.y = basePelvisY + animOffsetY;
+        velocityY = 0.0f;
     }
 
     bool showInitialFrame = false;
@@ -177,20 +269,21 @@ struct Character {
         
         pPelvis = std::make_shared<Particle>((Vector2){startPos.x, startPos.y + 282.5f}, 60.0f);
         
-        pLElbow = std::make_shared<Particle>((Vector2){startPos.x - 80.0f, startPos.y + 160.0f}, 30.0f, 1.0f, false, GROUP_ARM);
-        pLHand = std::make_shared<Particle>((Vector2){startPos.x - 80.0f, startPos.y + 320.0f}, 30.0f, 1.0f, false, GROUP_ARM);
-        pRElbow = std::make_shared<Particle>((Vector2){startPos.x - 80.0f, startPos.y + 160.0f}, 30.0f, 1.0f, false, GROUP_ARM);
-        pRHand = std::make_shared<Particle>((Vector2){startPos.x - 80.0f, startPos.y + 320.0f}, 30.0f, 1.0f, false, GROUP_ARM);
+        pLElbow = std::make_shared<Particle>((Vector2){startPos.x - 80.0f, startPos.y + 140.0f}, 30.0f, 1.0f, false, GROUP_ARM);
+        pLHand = std::make_shared<Particle>((Vector2){startPos.x - 80.0f, startPos.y + 260.0f}, 30.0f, 1.0f, false, GROUP_ARM);
+        pRElbow = std::make_shared<Particle>((Vector2){startPos.x - 80.0f, startPos.y + 140.0f}, 30.0f, 1.0f, false, GROUP_ARM);
+        pRHand = std::make_shared<Particle>((Vector2){startPos.x - 80.0f, startPos.y + 260.0f}, 30.0f, 1.0f, false, GROUP_ARM);
 
-        pLKnee = std::make_shared<Particle>((Vector2){startPos.x + 40.0f, startPos.y + 442.5f}, 35.0f, 1.0f, false, GROUP_LEG);
-        pLFoot = std::make_shared<Particle>((Vector2){startPos.x + 40.0f, startPos.y + 602.5f}, 22.5f, 1.0f, false, GROUP_LEG);
-        pRKnee = std::make_shared<Particle>((Vector2){startPos.x + 40.0f, startPos.y + 442.5f}, 35.0f, 1.0f, false, GROUP_LEG);
-        pRFoot = std::make_shared<Particle>((Vector2){startPos.x + 40.0f, startPos.y + 602.5f}, 22.5f, 1.0f, false, GROUP_LEG);
-        pLToe = std::make_shared<Particle>((Vector2){startPos.x + 140.0f, startPos.y + 602.5f}, 22.5f, 1.0f, false, GROUP_LEG);
-        pRToe = std::make_shared<Particle>((Vector2){startPos.x + 140.0f, startPos.y + 602.5f}, 22.5f, 1.0f, false, GROUP_LEG);
+        pLKnee = std::make_shared<Particle>((Vector2){startPos.x + 40.0f, startPos.y + 482.5f}, 35.0f, 1.0f, false, GROUP_LEG);
+        pLFoot = std::make_shared<Particle>((Vector2){startPos.x + 40.0f, startPos.y + 682.5f}, 22.5f, 1.0f, false, GROUP_LEG);
+        pRKnee = std::make_shared<Particle>((Vector2){startPos.x + 40.0f, startPos.y + 482.5f}, 35.0f, 1.0f, false, GROUP_LEG);
+        pRFoot = std::make_shared<Particle>((Vector2){startPos.x + 40.0f, startPos.y + 682.5f}, 22.5f, 1.0f, false, GROUP_LEG);
+        
+        pLToe = std::make_shared<Particle>((Vector2){startPos.x + 140.0f, startPos.y + 682.5f}, 22.5f, 1.0f, false, GROUP_LEG);
+        pRToe = std::make_shared<Particle>((Vector2){startPos.x + 140.0f, startPos.y + 682.5f}, 22.5f, 1.0f, false, GROUP_LEG);
 
-        pLFist = std::make_shared<Particle>((Vector2){startPos.x - 80.0f, startPos.y + 410.0f}, 30.0f, 1.0f, false, GROUP_ARM);
-        pRFist = std::make_shared<Particle>((Vector2){startPos.x - 80.0f, startPos.y + 410.0f}, 30.0f, 1.0f, false, GROUP_ARM);
+        pLFist = std::make_shared<Particle>((Vector2){startPos.x - 80.0f, startPos.y + 350.0f}, 30.0f, 1.0f, false, GROUP_ARM);
+        pRFist = std::make_shared<Particle>((Vector2){startPos.x - 80.0f, startPos.y + 350.0f}, 30.0f, 1.0f, false, GROUP_ARM);
 
         world.particles = { pHead, pNeck, pPelvis, pLElbow, pLHand, pRElbow, pRHand, pLKnee, pLFoot, pRKnee, pRFoot, pLToe, pRToe, pLFist, pRFist };
 
@@ -242,8 +335,14 @@ struct Character {
         calcDistAngle(pRHand, pRFist, boneLengths[13], currentAngles[13]);
 
         animator.LoadToLibrary("animations\\idle.txt", "idle");
+        animator.LoadToLibrary("animations\\walking.txt", "walking");
         animator.LoadToLibrary("animations\\running.txt", "running");
         animator.Play("idle", currentAngles); // Estado inicial
+        animator.LoadToLibrary("animations\\transformation.txt", "transformation", false);
+        if (animator.animations["transformation"].size() != 6) {
+            TraceLog(LOG_ERROR, "ERRO: O arquivo transformation.txt deve ter exatamente 6 frames!");
+        }
+        animator.LoadToLibrary("animations\\attack1.txt", "attack1", false);
     }
 
     bool LoadSkin(const std::string& folderPath) {
@@ -284,7 +383,8 @@ struct Character {
 
     void ApplyFK() {
         auto setPos = [&](std::shared_ptr<Particle> p, std::shared_ptr<Particle> parent, int angleIdx) {
-            p->position.x = parent->position.x + cos(currentAngles[angleIdx]) * boneLengths[angleIdx];
+            // Multiplica apenas o X (cos) pela direção
+            p->position.x = parent->position.x + (cos(currentAngles[angleIdx]) * boneLengths[angleIdx]) * facingDir;
             p->position.y = parent->position.y + sin(currentAngles[angleIdx]) * boneLengths[angleIdx];
             p->previousPosition = p->position;
         };
@@ -382,7 +482,7 @@ struct Character {
         auto calcFK = [&](int angleIdx, Vector2 parentPos) -> Vector2 {
             float angle = pose.angles[angleIdx];
             float len = boneLengths[angleIdx];
-            return { parentPos.x + cos(angle) * len, parentPos.y + sin(angle) * len };
+            return { parentPos.x + (cos(angle) * len) * facingDir, parentPos.y + sin(angle) * len }; // X alterado
         };
         
         Vector2 gNeck = calcFK(0, gPelvis);
@@ -405,14 +505,14 @@ struct Character {
             float dy = p2.y - p1.y;
             float angle = atan2(dy, dx) * RAD2DEG;
             float length = sqrt(dx*dx + dy*dy) + lengthBonus + offsetBack; // Aumenta o tamanho total
-            Rectangle source = { 0.0f, 0.0f, (float)tex.width, (float)tex.height };
+            Rectangle source = { 0.0f, 0.0f, (float)tex.width * facingDir, (float)tex.height };
             Rectangle dest = { p1.x, p1.y, width, length };
             Vector2 origin = { width / 2.0f, offsetBack }; // Move o eixo de rotação para frente, criando o calcanhar atrás
             DrawTexturePro(tex, source, dest, origin, angle - 90.0f, tint);
         };
 
         auto DrawGhostJointTex = [&](Texture2D tex, Vector2 pos, float size) {
-            Rectangle source = { 0.0f, 0.0f, (float)tex.width, (float)tex.height };
+            Rectangle source = { 0.0f, 0.0f, (float)tex.width * facingDir, (float)tex.height };
             Rectangle dest = { pos.x, pos.y, size, size };
             Vector2 origin = { size / 2.0f, size / 2.0f };
             DrawTexturePro(tex, source, dest, origin, 0.0f, tint);
@@ -424,7 +524,7 @@ struct Character {
         DrawGhostJointTex(texKnee, gLKnee, 75.0f);
 
         DrawGhostBone(texArm, gNeck, gRElbow, 80.0f); DrawGhostBone(texForearm, gRElbow, gRHand, 80.0f, 30.0f);
-        DrawGhostBone(texThigh, gPelvis, gLKnee, 75.0f); DrawGhostBone(texCalf, gLKnee, gLFoot, 75.0f);
+        DrawGhostBone(texThigh, gPelvis, gRKnee, 75.0f); DrawGhostBone(texCalf, gRKnee, gRFoot, 75.0f);
         DrawGhostBone(texTorso, gNeck, gPelvis, 160.0f, 37.5f);
         DrawGhostBone(texHead, gNeck, gHead, 160.0f);
         DrawGhostBone(texArm, gNeck, gLElbow, 80.0f); DrawGhostBone(texForearm, gLElbow, gLHand, 80.0f, 30.0f);
@@ -453,19 +553,19 @@ struct Character {
             }
         }
 
-        auto DrawBone = [](Texture2D tex, std::shared_ptr<Particle> p1, std::shared_ptr<Particle> p2, float width, Color tint, float lengthBonus = 0.0f, float offsetBack = 0.0f) {
+        auto DrawBone = [&](Texture2D tex, std::shared_ptr<Particle> p1, std::shared_ptr<Particle> p2, float width, Color tint, float lengthBonus = 0.0f, float offsetBack = 0.0f) {
             float dx = p2->position.x - p1->position.x;
             float dy = p2->position.y - p1->position.y;
             float angle = atan2(dy, dx) * RAD2DEG;
             float length = sqrt(dx*dx + dy*dy) + lengthBonus + offsetBack;
-            Rectangle source = { 0.0f, 0.0f, (float)tex.width, (float)tex.height };
+            Rectangle source = { 0.0f, 0.0f, (float)tex.width * facingDir, (float)tex.height };
             Rectangle dest = { p1->position.x, p1->position.y, width, length };
             Vector2 origin = { width / 2.0f, offsetBack }; 
             DrawTexturePro(tex, source, dest, origin, angle - 90.0f, tint);
         };
 
-        auto DrawJointTex = [](Texture2D tex, Vector2 pos, float size, Color tint) {
-            Rectangle source = { 0.0f, 0.0f, (float)tex.width, (float)tex.height };
+        auto DrawJointTex = [&](Texture2D tex, Vector2 pos, float size, Color tint) {
+            Rectangle source = { 0.0f, 0.0f, (float)tex.width * facingDir, (float)tex.height };
             Rectangle dest = { pos.x, pos.y, size, size };
             Vector2 origin = { size / 2.0f, size / 2.0f };
             DrawTexturePro(tex, source, dest, origin, 0.0f, tint);
@@ -484,14 +584,13 @@ struct Character {
         
         DrawBone(texHead, pNeck, pHead, 160.0f, WHITE);           // Cabeça
 
-        DrawJointTex(texElbow, pRElbow->position, 80.0f, WHITE); // Junta do Cotovelo Direito (Braço da frente)
-        DrawBone(texArm, pNeck, pRElbow, 80.0f, WHITE); DrawBone(texForearm, pRElbow, pRHand, 80.0f, WHITE, 30.0f); // Braço e Antebraço Direitos (Frente)
-
         DrawJointTex(texKnee, pRKnee->position, 75.0f, WHITE);   // Junta do Joelho Direito (Perna da frente)
         DrawBone(texThigh, pPelvis, pRKnee, 75.0f, WHITE); DrawBone(texCalf, pRKnee, pRFoot, 75.0f, WHITE);    // Coxa e Canela Direitas (Frente)
         DrawBone(texFoot, pRFoot, pRToe, 45.0f, WHITE, 0.0f, 38.0f);
 
+        DrawJointTex(texElbow, pRElbow->position, 80.0f, WHITE); // Junta do Cotovelo Direito (Braço da frente)
         DrawBone(texFist, pRHand, pRFist, 90.0f, WHITE);
+        DrawBone(texArm, pNeck, pRElbow, 80.0f, WHITE); DrawBone(texForearm, pRElbow, pRHand, 80.0f, WHITE, 30.0f); // Braço e Antebraço Direitos (Frente)
 
         if (currentMode != RAGDOLL) {
             auto drawJoint = [](std::shared_ptr<Particle> p) {
@@ -661,7 +760,7 @@ int main() {
                     if (player.animator.currentFrame < 0) player.animator.currentFrame = player.animator.track.size() - 1;
                     
                     int idx = (int)player.animator.currentFrame;
-                    for (int i = 0; i < 10; i++) player.currentAngles[i] = player.animator.track[idx].angles[i];
+                    for (int i = 0; i < 14; i++) player.currentAngles[i] = player.animator.track[idx].angles[i];
                     player.pPelvis->position = player.animator.track[idx].rootPos;
                     player.ApplyFK();
                 }
@@ -670,7 +769,7 @@ int main() {
                     if (player.animator.currentFrame >= player.animator.track.size()) player.animator.currentFrame = 0;
                     
                     int idx = (int)player.animator.currentFrame;
-                    for (int i = 0; i < 10; i++) player.currentAngles[i] = player.animator.track[idx].angles[i];
+                    for (int i = 0; i < 14; i++) player.currentAngles[i] = player.animator.track[idx].angles[i];
                     player.pPelvis->position = player.animator.track[idx].rootPos;
                     player.ApplyFK();
                 }
