@@ -1,6 +1,6 @@
-#include <string>
-#include <filesystem>
-#include <map>
+#include <string>       // Manipulação de textos dinâmicos e caminhos
+#include <filesystem>   // Leitura e validação de diretorios/arquivos do SO
+#include <map>          // Estrutura de dicionário
 
 // 1. Mágica de macros para proteger o Raylib (SEM NOGDI e NOUSER)
 #define Rectangle WinRectangle
@@ -11,9 +11,9 @@
 #define PlaySound WinPlaySound
 
 // 2. Inclui a API do Windows e ferramentas de pasta com todos os privilégios
-#include <windows.h>
-#include <commdlg.h>
-#include <shobjidl.h>
+#include <windows.h>    // API base do Windows
+#include <commdlg.h>    // Caixas de diálogo nativas do Windows para salvar/abrir arquivos
+#include <shobjidl.h>   // Interface avançada para seleção de pastas no Windows
 
 // 3. Limpa as macros renomeadas para o Raylib
 #undef Rectangle
@@ -28,9 +28,9 @@
 
 // 4. Inclui Raylib e as suas classes
 #include "raylib.h"
-#include "Physics.h"
-#include "Animator.h"
-#include <math.h>
+#include "Physics.h" 
+#include "Animator.h" 
+#include <math.h>       
 
 std::string SaveFileDialog() {
     OPENFILENAMEA ofn;
@@ -122,70 +122,128 @@ struct Character {
     float transformCooldown = 0.0f;
     bool isAttacking = false;
     float lastAnimX = 0.0f;
+    int comboStep = 0;        // Guarda qual ataque está tocando (1 a 4)
+    bool inputBuffer = false; // Guarda se o jogador apertou E antecipadamente
+    bool isHit = false;
+    float stunTimer = 0.0f;
+    bool hasDealtDamage = false;
+    bool isBlocking = false;
+
+    void TakeDamage(std::string hitAnim, float attackerDir, bool guardBreak = false) {
+        isHit = true;
+        isAttacking = false;     
+        isTransforming = false;  
+        comboStep = 0;
+        inputBuffer = false;
+        hasDealtDamage = false; 
+
+        if (guardBreak) isBlocking = false; // Quebra a guarda forçadamente no stun
+
+        animator.currentAnim = hitAnim;
+        animator.currentFrame = 0.0f;
+        animator.isBlending = false;
+        animator.animFinished = false;
+
+        if (animator.animations.find(hitAnim) != animator.animations.end()) {
+            float totalFrames = (float)animator.animations[hitAnim].size();
+            stunTimer = totalFrames / animator.playSpeed;
+        } else {
+            stunTimer = 0.5f; 
+        }
+
+        facingDir = attackerDir * -1.0f; 
+    }
     
     void Control(float dt, float groundY) {
-        bool isMoving = false;
-        bool isRunning = IsKeyDown(KEY_LEFT_SHIFT);
-        
-        float speed = isRunning ? 1200.0f : 600.0f; 
+        if (isHit) {
+            stunTimer -= dt;
+            if (stunTimer <= 0.0f) isHit = false; // Sai do stun
+        } 
+        else {
+            bool isMoving = false;
+            bool isRunning = IsKeyDown(KEY_LEFT_SHIFT);
+            float speed = isRunning ? 1200.0f : 600.0f;
 
-        // 1. Cooldown
-        if (transformCooldown > 0.0f) transformCooldown -= dt;
+            isBlocking = (IsKeyDown(KEY_Q) && !isAttacking && !isTransforming && !isTransformed);
 
-        // 2. Input de Transformação
-        if (IsKeyPressed(KEY_F) && transformCooldown <= 0.0f && !isAttacking) {
-            isTransforming = true;
-            isTransformed = !isTransformed;
-            transformCooldown = 2.0f; 
-            
-            if (isTransformed) {
-                animator.Play("transformation", currentAngles);
-                animator.playDirection = 1.0f;
-            } else {
-                animator.playDirection = -1.0f;
-                animator.currentFrame = 5.0f;
-            }
-        }
+            // 1. Cooldown
+            if (transformCooldown > 0.0f) transformCooldown -= dt;
 
-        // 3. Input de Ataque
-        if (IsKeyPressed(KEY_E) && !isTransformed && !isTransforming && !isAttacking) {
-            isAttacking = true;
-            animator.Play("attack1", currentAngles);
-            lastAnimX = animator.animations["attack1"][0].rootPos.x; // Guarda o X inicial
-        }
-
-        // 4. Movimento Lateral (Travado durante o ataque e transformação)
-        if (!isAttacking && !isTransforming) {
-            if (IsKeyDown(KEY_A)) { pPelvis->position.x -= speed * dt; isMoving = true; facingDir = -1.0f; }
-            if (IsKeyDown(KEY_D)) { pPelvis->position.x += speed * dt; isMoving = true; facingDir = 1.0f; }
-        }
-
-        // 5. Checagem de fim da Transformação
-        if (isTransforming) {
-            if (isTransformed && animator.currentFrame >= 5.0f) {
-                isTransforming = false; 
-            } else if (!isTransformed && animator.currentFrame <= 0.0f) {
-                isTransforming = false; 
-                animator.playDirection = 1.0f; 
-            }
-        }
-
-        // 6. Checagem de fim do Ataque
-        if (isAttacking && animator.animFinished) {
-            isAttacking = false;
-        }
-
-        // 7. Máquina de Estados de Animação
-        if (!isTransforming && !isAttacking) {
-            if (isTransformed) {
-                animator.currentAnim = "transformation";
-                animator.currentFrame = 5.0f;
-            } else {
-                if (isMoving) {
-                    if (isRunning) animator.Play("running", currentAngles);
-                    else animator.Play("walking", currentAngles);
+            // 2. Input de Transformação
+            if (IsKeyPressed(KEY_F) && transformCooldown <= 0.0f && !isAttacking) {
+                isTransforming = true;
+                isTransformed = !isTransformed;
+                transformCooldown = 2.0f; 
+                
+                if (isTransformed) {
+                    animator.Play("transformation", currentAngles);
+                    animator.playDirection = 1.0f;
                 } else {
-                    animator.Play("idle", currentAngles);
+                    animator.playDirection = -1.0f;
+                    animator.currentFrame = 5.0f;
+                }
+            }
+
+            // 3. Input de Ataque (com Input Buffer para o Combo)
+            if (IsKeyPressed(KEY_E) && !isTransformed && !isTransforming && !isBlocking) {
+                if (!isAttacking) {
+                    isAttacking = true;
+                    comboStep = 1;
+                    hasDealtDamage = false; // NOVO: Libera o dano
+                    animator.Play("attack1", currentAngles);
+                    lastAnimX = animator.animations["attack1"][0].rootPos.x; 
+                    inputBuffer = false;
+                } else if (comboStep < 5) {
+                    inputBuffer = true;
+                }
+            }
+
+            // 4. Movimento Lateral
+            if (!isAttacking && !isTransforming && !isBlocking) {
+                if (IsKeyDown(KEY_A)) { pPelvis->position.x -= speed * dt; isMoving = true; facingDir = -1.0f; }
+                if (IsKeyDown(KEY_D)) { pPelvis->position.x += speed * dt; isMoving = true; facingDir = 1.0f; }
+            }
+
+            // 5. Checagem de fim da Transformação
+            if (isTransforming) {
+                if (isTransformed && animator.currentFrame >= 5.0f) {
+                    isTransforming = false; 
+                } else if (!isTransformed && animator.currentFrame <= 0.0f) {
+                    isTransforming = false; 
+                    animator.playDirection = 1.0f; 
+                }
+            }
+
+            // 6. Checagem de fim do Ataque e Transição de Combo
+            if (isAttacking && animator.animFinished) {
+                if (inputBuffer && comboStep < 5) {
+                    comboStep++;
+                    hasDealtDamage = false; // NOVO: Libera o dano do próximo golpe
+                    std::string nextAttack = "attack" + std::to_string(comboStep); 
+                    animator.Play(nextAttack, currentAngles);
+                    lastAnimX = animator.animations[nextAttack][0].rootPos.x; 
+                    inputBuffer = false; 
+                } else {
+                    isAttacking = false;
+                    comboStep = 0;
+                    inputBuffer = false;
+                }
+            }
+
+            // 7. Máquina de Estados de Animação
+            if (!isTransforming && !isAttacking) {
+                if (isBlocking) {
+                    animator.Play("block", currentAngles); // Roda o bloqueio e trava no último frame naturalmente
+                } else if (isTransformed) {
+                    animator.currentAnim = "transformation";
+                    animator.currentFrame = 5.0f;
+                } else {
+                    if (isMoving) {
+                        if (isRunning) animator.Play("running", currentAngles);
+                        else animator.Play("walking", currentAngles);
+                    } else {
+                        animator.Play("idle", currentAngles);
+                    }
                 }
             }
         }
@@ -210,20 +268,18 @@ struct Character {
         }
 
         // 3. Aplica o Root Motion X exclusivo para o Ataque
-        if (isAttacking && animator.currentAnim == "attack1" && !animator.isBlending) {
-            auto& track = animator.animations["attack1"];
+        // O find() verifica se o nome da animação atual contém a palavra "attack"
+        if (isAttacking && animator.currentAnim.find("attack") != std::string::npos && !animator.isBlending) {
+            auto& track = animator.animations[animator.currentAnim];
             int idx1 = (int)animator.currentFrame;
             int idx2 = (idx1 + 1) % track.size();
             float blend = animator.currentFrame - idx1;
             
-            // X atual da animação
             float currentAnimX = track[idx1].rootPos.x + (track[idx2].rootPos.x - track[idx1].rootPos.x) * blend;
-            
-            // Pega a diferença do último frame e multiplica pelo lado que o boneco olha
             float deltaX = (currentAnimX - lastAnimX) * facingDir; 
             
-            pPelvis->position.x += deltaX; // Empurra a física
-            lastAnimX = currentAnimX;      // Salva para o próximo tick
+            pPelvis->position.x += deltaX; 
+            lastAnimX = currentAnimX;      
         }
 
         // 4. Aplica o movimento vertical da animação direto no corpo
@@ -342,7 +398,27 @@ struct Character {
         if (animator.animations["transformation"].size() != 6) {
             TraceLog(LOG_ERROR, "ERRO: O arquivo transformation.txt deve ter exatamente 6 frames!");
         }
+
+        // ATTACKS
         animator.LoadToLibrary("animations\\attack1.txt", "attack1", false);
+        animator.LoadToLibrary("animations\\attack2.txt", "attack2", false);
+        animator.LoadToLibrary("animations\\attack3.txt", "attack3", false);
+        animator.LoadToLibrary("animations\\attack4.txt", "attack4", false);
+        animator.LoadToLibrary("animations\\attack5.txt", "attack5", false);
+
+        // BLOCKS
+        animator.LoadToLibrary("animations\\block.txt", "block", false);
+        animator.LoadToLibrary("animations\\blockReactHigh.txt", "blockReactHigh", false);
+        animator.LoadToLibrary("animations\\blockReactMedium.txt", "blockReactMedium", false);
+        animator.LoadToLibrary("animations\\blockReactLow.txt", "blockReactLow", false);
+        animator.LoadToLibrary("animations\\blockReactStrong.txt", "blockReactStrong", false);
+
+        // REACTIONS
+        animator.LoadToLibrary("animations\\hit1.txt", "hit1", false); // Alto
+        animator.LoadToLibrary("animations\\hit2.txt", "hit2", false); // Médio
+        animator.LoadToLibrary("animations\\hit3.txt", "hit3", false); // Baixo
+        animator.LoadToLibrary("animations\\bighitAndFalling.txt", "bighit", false); // Forte
+
     }
 
     bool LoadSkin(const std::string& folderPath) {
@@ -606,6 +682,8 @@ struct Character {
     }
 };
 
+#include "Bot.h"
+
 void DrawButton(Rectangle rect, const char* text, bool& flag) {
     bool hover = CheckCollisionPointRec(GetMousePosition(), rect);
     if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) flag = !flag;
@@ -614,12 +692,71 @@ void DrawButton(Rectangle rect, const char* text, bool& flag) {
     DrawText(text, rect.x + 10, rect.y + 10, 20, BLACK);
 }
 
+void ProcessCombat(Character& attacker, Character& defender) {
+    if (!attacker.isAttacking || attacker.hasDealtDamage || attacker.animator.isBlending) return;
+
+    std::string anim = attacker.animator.currentAnim;
+    
+    if (!attacker.animator.animIsAttack[anim]) return;
+
+    if (attacker.animator.currentFrame >= attacker.animator.animActiveFrame[anim]) {
+        
+        Rectangle hb = attacker.animator.animHitbox[anim];
+        
+        float hbX = attacker.pPelvis->position.x + (attacker.facingDir > 0 ? hb.x : -(hb.x + hb.width));
+        float hbY = attacker.pPelvis->position.y + hb.y;
+        Rectangle attackBox = { hbX, hbY, hb.width, hb.height };
+        
+        // HURTBOX DINÂMICA
+        // Cobre do topo da cabeça (pHead - raio) até passar da cintura (pPelvis + margem)
+        float defTopY = defender.pHead->position.y - 80.0f; 
+        float defBottomY = defender.pPelvis->position.y + 100.0f;
+        float defHeight = defBottomY - defTopY;
+        
+        // Caixa com 120px de largura, acompanhando perfeitamente a física do corpo
+        Rectangle defendBox = { defender.pPelvis->position.x - 60.0f, defTopY, 120.0f, defHeight };
+
+        if (CheckCollisionRecs(attackBox, defendBox)) {
+            attacker.hasDealtDamage = true; 
+            int hitType = attacker.animator.animHitType[anim];
+            
+            // Intercepta o golpe se estiver bloqueando de frente para o atacante
+            if (defender.isBlocking && defender.facingDir != attacker.facingDir) {
+                std::string blockAnim = "blockReactHigh"; 
+                bool guardBreak = false;
+
+                if (hitType == 1) blockAnim = "blockReactMedium";       
+                else if (hitType == 2) blockAnim = "blockReactLow";  
+                else if (hitType == 3) {
+                    blockAnim = "blockReactStrong";
+                    guardBreak = true; // Quebra a defesa deixando o boneco vulnerável
+                }
+
+                defender.TakeDamage(blockAnim, attacker.facingDir, guardBreak);
+                return; // Encerra aqui para não aplicar a animação de dano real
+            }
+            
+            // DANO REAL (Caso não esteja bloqueando)
+            std::string hitAnim = "hit1"; 
+            if (hitType == 1) hitAnim = "hit2";       
+            else if (hitType == 2) hitAnim = "hit3";  
+            else if (hitType == 3) hitAnim = "bighit";
+
+            defender.TakeDamage(hitAnim, attacker.facingDir, false);
+        }
+    }
+}
+
 int main() {
     InitWindow(1600, 1000, "Galactic Shounen - Animator Sandbox");
     SetTargetFPS(60);
 
     Character player;
     player.Init({ 800.0f, 200.0f });
+
+    Bot enemy;
+    enemy.Init({ 1300.0f, 200.0f });
+
     const float groundY = 900.0f;
 
     // NOVO: Inicializa a Câmera
@@ -628,6 +765,15 @@ int main() {
     camera.offset = { 1600.0f / 2.0f, 1000.0f / 2.0f };
     camera.rotation = 0.0f;
     camera.zoom = 1.0f;
+    bool botActive = true;
+    bool botAggressive = true;
+    bool showHitboxes = false;
+
+    bool typingFrame = false;
+    std::string frameText = "";
+    bool creatingHitbox = false;
+    bool drawingHitbox = false;
+    Vector2 dragStart = {0,0}, dragEnd = {0,0};
 
     while (!WindowShouldClose()) {
         
@@ -656,6 +802,32 @@ int main() {
         // Passa as coordenadas calculadas para o Update
         player.Update(groundY, mouseWorld, mouseScreen);
 
+        if (player.currentMode == Character::GAMEPLAY) {
+            if (botActive) {
+                enemy.UpdateAI(GetFrameTime(), groundY, player, botAggressive);
+            }
+            // Processa as trocas de socos
+            ProcessCombat(player, enemy);
+            if (botActive && botAggressive) ProcessCombat(enemy, player);
+        }
+
+        // Lógica de desenho de Hitbox no modo ANIMATOR
+        Rectangle uiPanel = { 10, 10, 250, 620 }; // Aumente a altura do painel para caber os botões
+        if (player.currentMode == Character::ANIMATOR && player.animator.editIsAttack && creatingHitbox) {
+            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !CheckCollisionPointRec(mouseScreen, uiPanel)) {
+                drawingHitbox = true;
+                dragStart = mouseWorld;
+            }
+            if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && drawingHitbox) dragEnd = mouseWorld;
+            if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT) && drawingHitbox) {
+                drawingHitbox = false;
+                float minX = fmin(dragStart.x, dragEnd.x);
+                float minY = fmin(dragStart.y, dragEnd.y);
+                // Grava a hitbox baseada na distância para o quadril do boneco
+                player.animator.editHitbox = { minX - player.pPelvis->position.x, minY - player.pPelvis->position.y, fabs(dragEnd.x - dragStart.x), fabs(dragEnd.y - dragStart.y) };
+            }
+        }
+
         BeginDrawing();
         ClearBackground(WHITE);
 
@@ -663,10 +835,45 @@ int main() {
         BeginMode2D(camera);
             DrawRectangle(0, (int)groundY, 1600, 1000 - (int)groundY, DARKGRAY);
             player.Draw();
-        EndMode2D(); // Fecha o modo 2D
+            if (player.currentMode == Character::ANIMATOR && player.animator.editIsAttack) {
+                if (drawingHitbox) {
+                    DrawRectangle(fmin(dragStart.x, dragEnd.x), fmin(dragStart.y, dragEnd.y), fabs(dragEnd.x - dragStart.x), fabs(dragEnd.y - dragStart.y), Fade(RED, 0.5f));
+                } else if (player.animator.editHitbox.width > 0) {
+                    // SÓ DESENHA A HITBOX SE ESTIVER NO FRAME CONFIGURADO
+                    if ((int)player.animator.currentFrame == player.animator.editActiveFrame) {
+                        DrawRectangle(player.pPelvis->position.x + player.animator.editHitbox.x, player.pPelvis->position.y + player.animator.editHitbox.y, player.animator.editHitbox.width, player.animator.editHitbox.height, Fade(RED, 0.5f));
+                    }
+                }
+            }
+
+            if (botActive) enemy.Draw();
+
+            // Debug de Hitbox e Hurtbox no GAMEPLAY
+            if (player.currentMode == Character::GAMEPLAY && showHitboxes) {
+                auto DrawDebugBoxes = [](Character& c) {
+                    // Hurtbox do Corpo (Azul) - A mesma usada para receber dano
+                    float defTopY = c.pHead->position.y - 80.0f; 
+                    float defBottomY = c.pPelvis->position.y + 100.0f;
+                    DrawRectangleLinesEx({ c.pPelvis->position.x - 60.0f, defTopY, 120.0f, defBottomY - defTopY }, 2, BLUE);
+                    
+                    // Hitbox de Ataque (Vermelha) - Só renderiza se passou do active frame
+                    if (c.isAttacking && c.animator.animIsAttack[c.animator.currentAnim]) {
+                        if (c.animator.currentFrame >= c.animator.animActiveFrame[c.animator.currentAnim]) {
+                            Rectangle hb = c.animator.animHitbox[c.animator.currentAnim];
+                            float hbX = c.pPelvis->position.x + (c.facingDir > 0 ? hb.x : -(hb.x + hb.width));
+                            float hbY = c.pPelvis->position.y + hb.y;
+                            DrawRectangle(hbX, hbY, hb.width, hb.height, Fade(RED, 0.6f));
+                        }
+                    }
+                };
+                
+                DrawDebugBoxes(player);
+                if (botActive) DrawDebugBoxes(enemy);
+            }
+
+        EndMode2D();
 
         // UI Panel (Fica de fora da câmera para não sofrer zoom)
-        Rectangle uiPanel = { 10, 10, 250, 480 };
         DrawRectangleRec(uiPanel, Fade(LIGHTGRAY, 0.8f));
         DrawText("SISTEMA", 20, 20, 20, BLACK);
 
@@ -707,8 +914,6 @@ int main() {
         if (hoverMode && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             player.currentMode = (Character::Mode)((player.currentMode + 1) % 3);
             if (player.currentMode == Character::ANIMATOR || player.currentMode == Character::GAMEPLAY) {
-                player.pPelvis->position.y = 200.0f;
-                player.pPelvis->position.x = 800.0f;
                 player.ApplyFK();
             }
         }
@@ -747,13 +952,56 @@ int main() {
             } else {
                 DrawText(TextFormat("Frames Salvos: %d", (int)player.animator.track.size()), 20, 360, 15, BLACK);
             }
+
+            // NOVOS BOTÕES DE METADADOS
+            Rectangle btnAttackMode = { 20, 470, 200, 30 };
+            DrawButton(btnAttackMode, player.animator.editIsAttack ? "GOLPE: ON" : "GOLPE: OFF", player.animator.editIsAttack);
+
+            if (player.animator.editIsAttack) {
+                Rectangle btnFrameInput = { 20, 510, 200, 30 };
+                if (CheckCollisionPointRec(mouseScreen, btnFrameInput) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                    typingFrame = true; frameText = "";
+                } else if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) typingFrame = false;
+
+                if (typingFrame) {
+                    int key = GetCharPressed();
+                    while (key > 0) {
+                        if (key >= '0' && key <= '9') frameText += (char)key;
+                        key = GetCharPressed();
+                    }
+                    if (IsKeyPressed(KEY_BACKSPACE) && frameText.length() > 0) frameText.pop_back();
+                    if (IsKeyPressed(KEY_ENTER)) {
+                        player.animator.editActiveFrame = frameText.empty() ? 0 : std::stoi(frameText);
+                        typingFrame = false;
+                    }
+                }
+                DrawRectangleRec(btnFrameInput, typingFrame ? LIGHTGRAY : GRAY);
+                DrawText(TextFormat("Frame Ativ: %d", player.animator.editActiveFrame), btnFrameInput.x + 5, btnFrameInput.y + 5, 15, BLACK);
+                if (typingFrame) DrawText(frameText.c_str(), btnFrameInput.x + 130, btnFrameInput.y + 5, 20, RED);
+
+                Rectangle btnHitbox = { 20, 550, 200, 30 };
+                if (CheckCollisionPointRec(mouseScreen, btnHitbox) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) creatingHitbox = !creatingHitbox;
+                DrawRectangleRec(btnHitbox, creatingHitbox ? ORANGE : GRAY);
+                DrawText(creatingHitbox ? "APLICAR HITBOX" : "CRIAR HITBOX", btnHitbox.x + 10, btnHitbox.y + 5, 20, BLACK);
+
+                Rectangle btnHitType = { 20, 590, 200, 30 };
+                if (CheckCollisionPointRec(mouseScreen, btnHitType) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                    player.animator.editHitType = (player.animator.editHitType + 1) % 4; // Cicla 0, 1, 2, 3
+                }
+                const char* typeText = player.animator.editHitType == 0 ? "REACAO: ALTA" :
+                                      (player.animator.editHitType == 1 ? "REACAO: MEDIA" :
+                                      (player.animator.editHitType == 2 ? "REACAO: BAIXA" : "REACAO: FORTE"));
+                DrawRectangleRec(btnHitType, PURPLE);
+                DrawRectangleLinesEx(btnHitType, 2, BLACK);
+                DrawText(typeText, btnHitType.x + 10, btnHitType.y + 5, 20, WHITE);
+            }
             
-            Rectangle btnInitial = { 20, 390, 200, 30 };
+            Rectangle btnInitial = { 20, 640, 200, 30 };
             DrawButton(btnInitial, "Ver Posicao Inicial", player.showInitialFrame);
 
             if (!player.animator.isPlaying && !player.animator.track.empty()) {
-                Rectangle btnPrev = { 20, 430, 95, 30 };
-                Rectangle btnNext = { 125, 430, 95, 30 };
+                Rectangle btnPrev = { 20, 680, 95, 30 };
+                Rectangle btnNext = { 125, 680, 95, 30 };
                 
                 if (CheckCollisionPointRec(GetMousePosition(), btnPrev) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                     player.animator.currentFrame -= 1.0f;
@@ -777,6 +1025,21 @@ int main() {
                 DrawRectangleRec(btnPrev, GRAY); DrawRectangleLinesEx(btnPrev, 2, BLACK); DrawText("<", btnPrev.x + 40, btnPrev.y + 5, 20, WHITE);
                 DrawRectangleRec(btnNext, GRAY); DrawRectangleLinesEx(btnNext, 2, BLACK); DrawText(">", btnNext.x + 40, btnNext.y + 5, 20, WHITE);
             }
+        }
+
+        else if (player.currentMode == Character::GAMEPLAY) {
+            DrawText("CONTROLES DO BOT", 20, 185, 20, BLACK);
+            
+            Rectangle btnBotState = { 20, 215, 200, 40 };
+            DrawButton(btnBotState, botActive ? "Bot: LIGADO" : "Bot: DESLIGADO", botActive);
+            
+            if (botActive) {
+                Rectangle btnBotAggro = { 20, 265, 200, 40 };
+                DrawButton(btnBotAggro, botAggressive ? "Modo: ATACANDO" : "Modo: PARADO", botAggressive);
+            }
+
+            Rectangle btnHitboxes = { 20, 315, 200, 40 };
+            DrawButton(btnHitboxes, showHitboxes ? "Hitboxes: ON" : "Hitboxes: OFF", showHitboxes);
         }
 
         EndDrawing();

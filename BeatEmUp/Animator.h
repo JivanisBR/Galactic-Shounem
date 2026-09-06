@@ -1,10 +1,11 @@
 #pragma once
-#include "raylib.h"
-#include <vector>
-#include <math.h>
-#include <fstream>
-#include <string>
-#include <map>
+#include "raylib.h"     // Usa as estruturas Vector2 e Rectangle do motor gráfico
+#include <vector>       // Arrays dinâmicos para armazenar as listas de poses/keyframes
+#include <math.h>       // Operações trigonométricas, como fmod para interpolação
+#include <fstream>      // Criação de fluxos de entrada/saída de arquivos .txt no disco
+#include <string>       // Manipulação de textos e nomes de animações
+#include <map>          // Dicionários atrelando os metadados aos nomes dos golpes
+#include <sstream>      // Leitura e fragmentação dos dados em uma linha de texto (ex: META)
 
 struct Pose {
     float angles[14];
@@ -14,7 +15,24 @@ struct Pose {
 class Animator {
 public:
     bool animFinished = false;
-    std::map<std::string, bool> animLooping; // Define Loop vs One-Shot
+    std::map<std::string, bool> animLooping; 
+    
+    // MAPAS DE METADADOS
+    std::map<std::string, bool> animIsAttack;
+    std::map<std::string, int> animActiveFrame;
+    std::map<std::string, Rectangle> animHitbox;
+    std::map<std::string, float> animPower;
+    std::map<std::string, Vector2> animDirection;
+    std::map<std::string, int> animHitType;
+
+    // VARIÁVEIS DE EDIÇÃO (MODO ANIMATOR)
+    bool editIsAttack = false;
+    int editActiveFrame = 0;
+    Rectangle editHitbox = {0, 0, 0, 0};
+    float editPower = 10.0f;
+    Vector2 editDirection = {1.0f, 0.0f};
+    int editHitType = 0;
+
     std::vector<Pose> track;
     bool isPlaying = false;
     float currentFrame = 0.0f;
@@ -23,7 +41,7 @@ public:
     std::map<std::string, std::vector<Pose>> animations;
     std::string currentAnim = "";
     std::string nextAnim = "";
-    float playDirection = 1.0f; // NOVO: 1.0f toca normal, -1.0f toca de trás pra frente
+    float playDirection = 1.0f; 
     bool isBlending = false;
     float blendTimer = 0.0f;
     const float BLEND_DURATION = 0.15f; 
@@ -38,6 +56,11 @@ public:
     void SaveToFile(const std::string& filepath) {
         std::ofstream file(filepath);
         if (!file.is_open()) return;
+        
+        file << "META " << editIsAttack << " " << editActiveFrame << " " 
+             << editHitbox.x << " " << editHitbox.y << " " << editHitbox.width << " " << editHitbox.height << " "
+             << editPower << " " << editDirection.x << " " << editDirection.y << " " << editHitType << "\n";
+
         for (const auto& p : track) {
             file << p.rootPos.x << " " << p.rootPos.y;
             for (int i = 0; i < 14; i++) file << " " << p.angles[i];
@@ -51,10 +74,70 @@ public:
         if (!file.is_open()) return;
         track.clear();
         currentFrame = 0.0f;
-        Pose p;
-        while (file >> p.rootPos.x >> p.rootPos.y) {
-            for (int i = 0; i < 14; i++) file >> p.angles[i];
-            track.push_back(p);
+        editIsAttack = false; editActiveFrame = 0; editHitbox = {0,0,0,0}; editPower = 10.0f; editDirection = {1.0f, 0.0f};
+
+        std::string line;
+        while (std::getline(file, line)) {
+            if (line.empty()) continue;
+            std::istringstream iss(line);
+            std::string firstToken;
+            iss >> firstToken;
+            
+            if (firstToken == "META") {
+                int tempAttack;
+                iss >> tempAttack >> editActiveFrame >> editHitbox.x >> editHitbox.y >> editHitbox.width >> editHitbox.height >> editPower >> editDirection.x >> editDirection.y;
+                if (iss >> editHitType) {} else { editHitType = 0; } // Lê se existir, senão fica 0 (compatibilidade com arquivos velhos)
+                editIsAttack = tempAttack > 0;
+            }
+            else {
+                Pose p;
+                p.rootPos.x = std::stof(firstToken);
+                iss >> p.rootPos.y;
+                for (int i = 0; i < 14; i++) iss >> p.angles[i];
+                track.push_back(p);
+            }
+        }
+        file.close();
+    }
+
+    void LoadToLibrary(const std::string& path, const std::string& name, bool isLoop = true) {
+        std::ifstream file(path);
+        if (!file.is_open()) return;
+        std::vector<Pose> newAnim;
+        
+        bool isAttack = false; int actFrame = 0; Rectangle hb = {0,0,0,0}; float pwr = 10.0f; Vector2 dir = {1.0f, 0.0f}; int hType = 0;
+        std::string line;
+
+        while (std::getline(file, line)) {
+            if (line.empty()) continue;
+            std::istringstream iss(line);
+            std::string firstToken;
+            iss >> firstToken;
+            
+            if (firstToken == "META") {
+                int tempAttack;
+                iss >> tempAttack >> actFrame >> hb.x >> hb.y >> hb.width >> hb.height >> pwr >> dir.x >> dir.y;
+                if (iss >> hType) {} else { hType = 0; }
+                isAttack = tempAttack > 0;
+            }
+            else {
+                // Arquivo sem meta ou já estamos lendo os frames
+                Pose p;
+                p.rootPos.x = std::stof(firstToken);
+                iss >> p.rootPos.y;
+                for (int i = 0; i < 14; i++) iss >> p.angles[i];
+                newAnim.push_back(p);
+            }
+        }
+        if (!newAnim.empty()) {
+            animations[name] = newAnim;
+            animLooping[name] = isLoop;
+            animIsAttack[name] = isAttack;
+            animActiveFrame[name] = actFrame;
+            animHitbox[name] = hb;
+            animPower[name] = pwr;
+            animDirection[name] = dir;
+            animHitType[name] = hType;
         }
         file.close();
     }
@@ -91,22 +174,6 @@ public:
             while (diff > PI) diff -= 2 * PI;
             currentAngles[i] = a1 + diff * blend;
         }
-    }
-
-    void LoadToLibrary(const std::string& path, const std::string& name, bool isLoop = true) {
-        std::ifstream file(path);
-        if (!file.is_open()) return;
-        std::vector<Pose> newAnim;
-        Pose p;
-        while (file >> p.rootPos.x >> p.rootPos.y) {
-            for (int i = 0; i < 14; i++) file >> p.angles[i];
-            newAnim.push_back(p);
-        }
-        if (!newAnim.empty()) {
-            animations[name] = newAnim;
-            animLooping[name] = isLoop; // Registra o tipo da animação
-        }
-        file.close();
     }
 
     void Play(const std::string& name, float* currentAngles) {
@@ -161,17 +228,21 @@ public:
             } 
             else {
                 // Lógica para as demais animações (Loop e One-Shot)
-                if (currentFrame >= animTrack.size()) {
-                    if (animLooping[currentAnim]) {
+                if (animLooping[currentAnim]) {
+                    if (currentFrame >= animTrack.size()) {
                         currentFrame -= animTrack.size(); // Loopa
-                    } else {
-                        // Animação única terminou (ex: attack1)
-                        currentFrame = animTrack.size() - 1.0f;
-                        animFinished = true; // Avisa que terminou sem apagar o estado
-                        return;
+                    } else if (currentFrame < 0.0f) {
+                        currentFrame += animTrack.size(); // Previne index negativo
                     }
-                } else if (currentFrame < 0.0f) {
-                    currentFrame += animTrack.size(); // Previne index negativo
+                } else {
+                    // Animações Únicas (Ataques, Hits, Block)
+                    float maxFrame = animTrack.size() - 1.0f;
+                    if (currentFrame >= maxFrame) {
+                        currentFrame = maxFrame; // Crava matematicamente no último frame sem deixar vazar
+                        animFinished = true;
+                    } else if (currentFrame < 0.0f) {
+                        currentFrame = 0.0f;
+                    }
                 }
             }
             
