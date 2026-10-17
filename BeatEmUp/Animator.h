@@ -10,6 +10,8 @@
 struct Pose {
     float angles[14];
     Vector2 rootPos;
+    float targetAngles[14];
+    Vector2 targetRootPos;
 };
 
 class Animator {
@@ -18,20 +20,26 @@ public:
     std::map<std::string, bool> animLooping; 
     
     // MAPAS DE METADADOS
-    std::map<std::string, bool> animIsAttack;
+    std::map<std::string, int> animType; //  0=Comum, 1=Golpe, 2=Conjunta
     std::map<std::string, int> animActiveFrame;
     std::map<std::string, Rectangle> animHitbox;
     std::map<std::string, float> animPower;
     std::map<std::string, Vector2> animDirection;
     std::map<std::string, int> animHitType;
+    std::map<std::string, std::string> animCustomReaction;
+    std::map<std::string, int> animTargetPart;
+    std::map<std::string, int> animCamFollow; // NOVO
 
     // VARIÁVEIS DE EDIÇÃO (MODO ANIMATOR)
-    bool editIsAttack = false;
+    int editAnimType = 0; 
     int editActiveFrame = 0;
     Rectangle editHitbox = {0, 0, 0, 0};
     float editPower = 10.0f;
     Vector2 editDirection = {1.0f, 0.0f};
     int editHitType = 0;
+    std::string editCustomReaction = "none";
+    int editTargetPart = 1; // 0 = Cabeça, 1 = Tronco, 2 = Perna Direita
+    int editCamFollow = 1; // 1 = Segue, 0 = Travada
 
     std::vector<Pose> track;
     bool isPlaying = false;
@@ -47,6 +55,9 @@ public:
     const float BLEND_DURATION = 0.15f; 
     float savedAngles[14];
 
+    std::map<std::string, float> animDamage;
+    float editDamage = 10.0f;
+
     float LerpAngle(float start, float end, float t) {
         float difference = fmod(end - start, PI * 2.0f);
         float distance = fmod(2.0f * difference, PI * 2.0f) - difference;
@@ -57,13 +68,20 @@ public:
         std::ofstream file(filepath);
         if (!file.is_open()) return;
         
-        file << "META " << editIsAttack << " " << editActiveFrame << " " 
+        // Salva editAnimType em vez do booleano
+        file << "META " << editAnimType << " " << editActiveFrame << " " 
              << editHitbox.x << " " << editHitbox.y << " " << editHitbox.width << " " << editHitbox.height << " "
-             << editPower << " " << editDirection.x << " " << editDirection.y << " " << editHitType << "\n";
-
+             << editPower << " " << editDirection.x << " " << editDirection.y << " " << editHitType << " " << editCustomReaction << " " << editTargetPart << " " << editCamFollow << "\n";
+        file << "DMG: " << editDamage << "\n";
+        
         for (const auto& p : track) {
             file << p.rootPos.x << " " << p.rootPos.y;
             for (int i = 0; i < 14; i++) file << " " << p.angles[i];
+            
+            //  Salva os dados do Bot (mesmo que sejam 0 se não for conjunta)
+            file << " " << p.targetRootPos.x << " " << p.targetRootPos.y;
+            for (int i = 0; i < 14; i++) file << " " << p.targetAngles[i];
+            
             file << "\n";
         }
         file.close();
@@ -74,7 +92,7 @@ public:
         if (!file.is_open()) return;
         track.clear();
         currentFrame = 0.0f;
-        editIsAttack = false; editActiveFrame = 0; editHitbox = {0,0,0,0}; editPower = 10.0f; editDirection = {1.0f, 0.0f};
+        editAnimType = 0; editActiveFrame = 0; editHitbox = {0,0,0,0}; editPower = 10.0f; editDirection = {1.0f, 0.0f};
 
         std::string line;
         while (std::getline(file, line)) {
@@ -82,18 +100,33 @@ public:
             std::istringstream iss(line);
             std::string firstToken;
             iss >> firstToken;
+
+            if (firstToken == "DMG:") { iss >> editDamage; continue; }
             
             if (firstToken == "META") {
-                int tempAttack;
-                iss >> tempAttack >> editActiveFrame >> editHitbox.x >> editHitbox.y >> editHitbox.width >> editHitbox.height >> editPower >> editDirection.x >> editDirection.y;
-                if (iss >> editHitType) {} else { editHitType = 0; } // Lê se existir, senão fica 0 (compatibilidade com arquivos velhos)
-                editIsAttack = tempAttack > 0;
+                iss >> editAnimType >> editActiveFrame >> editHitbox.x >> editHitbox.y >> editHitbox.width >> editHitbox.height >> editPower >> editDirection.x >> editDirection.y;
+                if (iss >> editHitType) {
+                    if (iss >> editCustomReaction) {
+                        if (iss >> editTargetPart) {
+                            if (!(iss >> editCamFollow)) editCamFollow = 1;
+                        } else { editTargetPart = 1; editCamFollow = 1; }
+                    } else { editCustomReaction = "none"; editTargetPart = 1; editCamFollow = 1; }
+                } else { editHitType = 0; editCustomReaction = "none"; editTargetPart = 1; editCamFollow = 1; }
             }
             else {
                 Pose p;
                 p.rootPos.x = std::stof(firstToken);
                 iss >> p.rootPos.y;
                 for (int i = 0; i < 14; i++) iss >> p.angles[i];
+                
+                //  Lê os dados do Bot (se o arquivo antigo não tiver, preenche com 0)
+                if (iss >> p.targetRootPos.x) {
+                    iss >> p.targetRootPos.y;
+                    for (int i = 0; i < 14; i++) iss >> p.targetAngles[i];
+                } else {
+                    p.targetRootPos = {0.0f, 0.0f};
+                    for (int i = 0; i < 14; i++) p.targetAngles[i] = 0.0f;
+                }
                 track.push_back(p);
             }
         }
@@ -105,7 +138,8 @@ public:
         if (!file.is_open()) return;
         std::vector<Pose> newAnim;
         
-        bool isAttack = false; int actFrame = 0; Rectangle hb = {0,0,0,0}; float pwr = 10.0f; Vector2 dir = {1.0f, 0.0f}; int hType = 0;
+        int aType = 0; int actFrame = 0; Rectangle hb = {0,0,0,0}; float pwr = 10.0f; Vector2 dir = {1.0f, 0.0f}; int hType = 0; std::string cReact = "none"; int tPart = 1; int cFollow = 1;
+        float cDmg = 10.0f;
         std::string line;
 
         while (std::getline(file, line)) {
@@ -113,39 +147,61 @@ public:
             std::istringstream iss(line);
             std::string firstToken;
             iss >> firstToken;
+
+            if (firstToken == "DMG:") { iss >> cDmg; continue; }
             
             if (firstToken == "META") {
-                int tempAttack;
-                iss >> tempAttack >> actFrame >> hb.x >> hb.y >> hb.width >> hb.height >> pwr >> dir.x >> dir.y;
-                if (iss >> hType) {} else { hType = 0; }
-                isAttack = tempAttack > 0;
+                iss >> aType >> actFrame >> hb.x >> hb.y >> hb.width >> hb.height >> pwr >> dir.x >> dir.y;
+                if (iss >> hType) {
+                    if (iss >> cReact) {
+                        if (iss >> tPart) {
+                            if (!(iss >> cFollow)) cFollow = 1;
+                        } else { tPart = 1; cFollow = 1; }
+                    } else { cReact = "none"; tPart = 1; cFollow = 1; }
+                } else { hType = 0; cReact = "none"; tPart = 1; cFollow = 1; }
             }
             else {
-                // Arquivo sem meta ou já estamos lendo os frames
                 Pose p;
                 p.rootPos.x = std::stof(firstToken);
                 iss >> p.rootPos.y;
                 for (int i = 0; i < 14; i++) iss >> p.angles[i];
+                
+                //  Lê os dados do Bot
+                if (iss >> p.targetRootPos.x) {
+                    iss >> p.targetRootPos.y;
+                    for (int i = 0; i < 14; i++) iss >> p.targetAngles[i];
+                } else {
+                    p.targetRootPos = {0.0f, 0.0f};
+                    for (int i = 0; i < 14; i++) p.targetAngles[i] = 0.0f;
+                }
                 newAnim.push_back(p);
             }
         }
         if (!newAnim.empty()) {
             animations[name] = newAnim;
             animLooping[name] = isLoop;
-            animIsAttack[name] = isAttack;
+            animType[name] = aType; //  Registra o tipo da animação na memória
             animActiveFrame[name] = actFrame;
             animHitbox[name] = hb;
             animPower[name] = pwr;
             animDirection[name] = dir;
             animHitType[name] = hType;
+            animCustomReaction[name] = cReact;
         }
+        animDamage[name] = cDmg;
+        animTargetPart[name] = tPart;
+        animCamFollow[name] = cFollow;
         file.close();
     }
 
-    void AddPose(float* currentAngles, Vector2 root) {
+    void AddPose(float* currentAngles, Vector2 root, float* targetAngles, Vector2 targetRoot) {
         Pose p;
-        for(int i = 0; i < 14; i++) p.angles[i] = currentAngles[i];
+        for(int i = 0; i < 14; i++) {
+            p.angles[i] = currentAngles[i];
+            p.targetAngles[i] = targetAngles[i];
+        }
         p.rootPos = root;
+        p.targetRootPos = targetRoot;
         track.push_back(p);
     }
 
@@ -177,10 +233,20 @@ public:
     }
 
     void Play(const std::string& name, float* currentAngles) {
-        if (animations.find(name) == animations.end()) return;
-        if (isBlending) { if (nextAnim == name) return; } 
-        else { if (currentAnim == name) return; }
+        // 1. Trava anti-crash: Ignora nomes inválidos ou vetores fantasmas (vazios)
+        if (animations.find(name) == animations.end() || animations[name].empty()) return;
         
+        // 2. Trava de Congelamento:
+        if (isBlending) { 
+            if (nextAnim == name) return; 
+        } 
+        else { 
+            // A MÁGICA ESTÁ AQUI: 
+            // Previne congelamento de estados contínuos (walking, idle, block), 
+            // mas libera a repetição do Play se for um ataque (para permitir repetir o mesmo soco num combo)
+            if (currentAnim == name && animType[name] == 0) return;
+        }
+
         if (currentAnim == "") { 
             currentAnim = name;
             currentFrame = 0.0f;
@@ -194,8 +260,19 @@ public:
         for (int i = 0; i < 14; i++) savedAngles[i] = currentAngles[i];
     }
 
+    // Força uma interpolação suave de qualquer pose física/IK de volta para uma animação real
+    void ForceBlend(const std::string& targetAnim, float* currentAngles) {
+        if (animations.find(targetAnim) == animations.end() || animations[targetAnim].empty()) return;
+        nextAnim = targetAnim;
+        isBlending = true;
+        blendTimer = 0.0f;
+        animFinished = false;
+        // Salva a pose exata em que o braço (ou corpo) estava pelo IK para fazer o blend
+        for (int i = 0; i < 14; i++) savedAngles[i] = currentAngles[i];
+    }
+
     void UpdateGameplay(float dt, float* currentAngles) {
-        if (animations.find(currentAnim) == animations.end()) return;
+        if (animations.find(currentAnim) == animations.end() || animations[currentAnim].empty()) return;
 
         if (isBlending) {
             blendTimer += dt;
@@ -258,6 +335,47 @@ public:
                 while (diff > PI) diff -= 2 * PI;
                 currentAngles[i] = a1 + diff * blend;
             }
+        }
+    }
+
+    // NOVO: Função exclusiva que pega a pose salva do Defensor e aplica no Bot
+    void UpdateDefender(float* currentAngles, Vector2& currentRoot, Vector2 attackerRoot, float facingDir) {
+        // CORREÇÃO: Lê a animação alvo se estiver na transição
+        std::string animToRead = isBlending ? nextAnim : currentAnim;
+        if (animations.find(animToRead) == animations.end() || animations[animToRead].empty()) return;
+        auto& animTrack = animations[animToRead];
+        
+        float blend = 0.0f;
+        int idx1 = 0;
+        int idx2 = 0;
+        
+        // Se estiver blendando, trava o cálculo no Frame 0!
+        if (!isBlending) {
+            idx1 = (int)currentFrame;
+            idx2 = (idx1 + 1) % animTrack.size();
+            blend = currentFrame - idx1;
+        }
+        
+        // Pega a distância original gravada na animação entre o Bot e o Player
+        float offsetX1 = animTrack[idx1].targetRootPos.x - animTrack[idx1].rootPos.x;
+        float offsetY1 = animTrack[idx1].targetRootPos.y - animTrack[idx1].rootPos.y;
+        float offsetX2 = animTrack[idx2].targetRootPos.x - animTrack[idx2].rootPos.x;
+        float offsetY2 = animTrack[idx2].targetRootPos.y - animTrack[idx2].rootPos.y;
+        
+        float blendX = offsetX1 + (offsetX2 - offsetX1) * blend;
+        float blendY = offsetY1 + (offsetY2 - offsetY1) * blend;
+        
+        // A posição exata que o Bot DEVE estar para a animação encaixar perfeitamente!
+        currentRoot.x = attackerRoot.x + blendX * facingDir;
+        currentRoot.y = attackerRoot.y + blendY;
+        
+        for (int i = 0; i < 14; i++) {
+            float a1 = animTrack[idx1].targetAngles[i];
+            float a2 = animTrack[idx2].targetAngles[i];
+            float diff = a2 - a1;
+            while (diff < -PI) diff += 2 * PI;
+            while (diff > PI) diff -= 2 * PI;
+            currentAngles[i] = a1 + diff * blend;
         }
     }
 };

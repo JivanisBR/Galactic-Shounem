@@ -51,7 +51,7 @@ struct AngleConstraint {
         pEnd = e;
         minAngle = minA;
         maxAngle = maxA;
-        isBroken = true; // Alterado: Padrão agora é vir quebrado (Ragdoll solto)
+        isBroken = true; // Padrão agora é vir quebrado (Ragdoll solto)
     }
 };
 
@@ -62,21 +62,35 @@ public:
     std::vector<std::shared_ptr<AngleConstraint>> angleConstraints;
     Vector2 gravity = { 0.0f, 0.5f };
 
-    void ApplyForces() {
+    void ApplyForces(float dt) {
+        // Normaliza o dt para a escala da sua engine (onde 1 frame = ~0.016s).
+        // Isso cria um multiplicador perfeito: 1.0 em velocidade normal, 0.1 no SlowMo!
+        float timeScale = dt * 60.0f; 
+
         for (auto& p : particles) {
             if (p->isPinned) continue;
+            
+            // 1. Extrai a velocidade pura armazenada na memória
             Vector2 velocity = { p->position.x - p->previousPosition.x, p->position.y - p->previousPosition.y };
             
-            float maxVel = 60.0f;
+            float maxVel = 150.0f; 
             float velMag = sqrt(velocity.x * velocity.x + velocity.y * velocity.y);
-            if (velMag > maxVel) {
+            if (velMag > maxVel && velMag > 0.0f) {
                 velocity.x = (velocity.x / velMag) * maxVel;
                 velocity.y = (velocity.y / velMag) * maxVel;
             }
 
-            p->previousPosition = p->position;
-            p->position.x += velocity.x + gravity.x;
-            p->position.y += velocity.y + gravity.y;
+            // 2. Calcula qual seria o próximo passo real (adicionando a gravidade cheia)
+            Vector2 nextVelocity = { velocity.x + gravity.x, velocity.y + gravity.y };
+
+            // 3. Move o osso visualmente de acordo com a porcentagem da câmera lenta
+            p->position.x += nextVelocity.x * timeScale;
+            p->position.y += nextVelocity.y * timeScale;
+            
+            // 4. MÁGICA DO VERLET: Falsifica a posição anterior com base na velocidade inteira!
+            // Isso engana a engine para ela preservar 100% da inércia para o próximo frame.
+            p->previousPosition.x = p->position.x - nextVelocity.x;
+            p->previousPosition.y = p->position.y - nextVelocity.y;
         }
     }
 
@@ -90,11 +104,17 @@ public:
                 if (distance == 0.0f) continue;
 
                 float difference = c->restLength - distance;
-                float percent = difference / distance / 2.0f;
-                Vector2 offset = { dx * percent, dy * percent };
+                
+                // Cálculo de massa realista
+                // A partícula mais pesada se move menos, a mais leve é arrastada
+                float totalMass = c->p1->mass + c->p2->mass;
+                float percent1 = c->p2->mass / totalMass; 
+                float percent2 = c->p1->mass / totalMass;
 
-                if (!c->p1->isPinned) { c->p1->position.x -= offset.x; c->p1->position.y -= offset.y; }
-                if (!c->p2->isPinned) { c->p2->position.x += offset.x; c->p2->position.y += offset.y; }
+                Vector2 offset = { dx * (difference / distance), dy * (difference / distance) };
+
+                if (!c->p1->isPinned) { c->p1->position.x -= offset.x * percent1; c->p1->position.y -= offset.y * percent1; }
+                if (!c->p2->isPinned) { c->p2->position.x += offset.x * percent2; c->p2->position.y += offset.y * percent2; }
             }
 
             for (auto& ac : angleConstraints) {
@@ -185,8 +205,8 @@ public:
         }
     }
 
-    void Update(float minX, float maxX, float minY, float maxY) {
-        ApplyForces();
+    void Update(float dt, float minX, float maxX, float minY, float maxY) {
+        ApplyForces(dt);
         SolveConstraints();
         ConstrainToBounds(minX, maxX, minY, maxY);
     }
